@@ -1,0 +1,4 @@
+.DS_Store
+dmg_stage/
+*.dmg
+.skill_registry.json
