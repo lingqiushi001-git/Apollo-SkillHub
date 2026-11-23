@@ -18,13 +18,15 @@
   - 左侧边栏支持新建分类、行内重命名、带二次确认弹窗的删除分类；
   - 右侧顶部横向按平台筛选（`全部平台 / Antigravity / Codex / Claude`）及按分类一键 `全开 / 全关`。
 - **独立居中导入弹窗**：支持输入 GitHub 仓库（`owner/repo` 或完整 URL）一键克隆校验安装，或直接导入本地 Skill 文件夹到固定仓库，绝不遮挡/挤压技能列表。
+- **MCP 服务只读盘点（v1.1 新增）**：自动聚合 Antigravity（`~/.gemini/config/mcp_config.json`）、Codex（`~/.codex/config.toml`）、Claude Code（`~/.claude.json`）三端 MCP 服务，环境变量值自动脱敏隐藏，支持一键打开原配置文件。
+- **Plugins 插件总览（v1.1 新增）**：展示已安装 Antigravity 插件元信息与包含的 Skill 标签，支持在插件与 Skill 视图间双向跳转定位。
 
 ---
 
 ## 📦 安装方式 (Installation)
 
 ### 方式一：通过 Releases DMG 安装（推荐）
-1. 在 [Releases](../../releases) 页面下载最新的 **`Apollo-SkillHub-1.0.0.dmg`**。
+1. 在 [Releases](../../releases) 页面下载最新的 **`Apollo-SkillHub-1.1.0.dmg`**。
 2. 双击挂载 DMG 镜像，将 **`Apollo SkillHub.app`** 拖入 **`Applications`** 文件夹。
 3. 从「应用程序」或启动台打开即可使用。
 

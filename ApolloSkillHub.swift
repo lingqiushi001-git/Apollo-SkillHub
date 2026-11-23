@@ -130,6 +130,42 @@ struct SkillItemModel: Identifiable, Equatable {
     }
 }
 
+enum HubTab: String, CaseIterable, Identifiable {
+    case skills
+    case mcp
+    case plugins
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .skills: return "Skills 技能"
+        case .mcp: return "MCP 服务"
+        case .plugins: return "Plugins 插件"
+        }
+    }
+}
+
+struct McpServerItemModel: Identifiable, Equatable {
+    let id: String
+    var commandSummary: String
+    var envKeys: [String]
+    var platforms: Set<AgentPlatform>
+    var configPaths: [AgentPlatform: String]
+}
+
+struct PluginItemModel: Identifiable, Equatable {
+    let id: String
+    var displayName: String
+    var version: String
+    var authorName: String
+    var descriptionText: String
+    var repositoryUrl: String
+    var pluginPath: String
+    var pluginJsonPath: String?
+    var bundledSkills: [String]
+}
+
 // MARK: - SkillStore (Canonical Vault + 3-Platform Symlink Matrix)
 
 final class SkillStore: ObservableObject {
@@ -140,6 +176,8 @@ final class SkillStore: ObservableObject {
     @Published var fixedVaultPath: String
     @Published var categories: [SkillCategory] = []
     @Published var skills: [SkillItemModel] = []
+    @Published var mcpServers: [McpServerItemModel] = []
+    @Published var plugins: [PluginItemModel] = []
     @Published var showBuiltins: Bool {
         didSet { UserDefaults.standard.set(showBuiltins, forKey: Self.showBuiltinDefaultsKey) }
     }
@@ -535,6 +573,194 @@ final class SkillStore: ObservableObject {
             if r1 != r2 { return r1 < r2 }
             return $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending
         }
+        reloadMcpServers()
+        reloadPlugins()
+    }
+
+    // MARK: - MCP & Plugin Read-Only Scanners
+
+    func mcpConfigPath(for platform: AgentPlatform) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        switch platform {
+        case .antigravity: return "\(home)/.gemini/config/mcp_config.json"
+        case .codex: return "\(home)/.codex/config.toml"
+        case .claude: return "\(home)/.claude.json"
+        }
+    }
+
+    func reloadMcpServers() {
+        let fm = FileManager.default
+        struct Draft {
+            var commands: [String] = []
+            var envKeys: Set<String> = []
+            var platforms: Set<AgentPlatform> = []
+            var configPaths: [AgentPlatform: String] = [:]
+        }
+        var merged: [String: Draft] = [:]
+
+        func parseJsonMcpFile(path: String, platform: AgentPlatform) {
+            guard fm.fileExists(atPath: path),
+                  let data = fm.contents(atPath: path),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let servers = json["mcpServers"] as? [String: Any] else { return }
+            for (name, rawVal) in servers {
+                guard let dict = rawVal as? [String: Any] else { continue }
+                var draft = merged[name] ?? Draft()
+                draft.platforms.insert(platform)
+                draft.configPaths[platform] = path
+                if let cmd = dict["command"] as? String {
+                    let args = (dict["args"] as? [String]) ?? []
+                    let line = ([cmd] + args).joined(separator: " ")
+                    if !draft.commands.contains(line) { draft.commands.append(line) }
+                } else if let url = dict["url"] as? String {
+                    if !draft.commands.contains(url) { draft.commands.append(url) }
+                }
+                if let env = dict["env"] as? [String: Any] {
+                    for k in env.keys { draft.envKeys.insert(k) }
+                }
+                merged[name] = draft
+            }
+        }
+
+        parseJsonMcpFile(path: mcpConfigPath(for: .antigravity), platform: .antigravity)
+        parseJsonMcpFile(path: mcpConfigPath(for: .claude), platform: .claude)
+
+        // Parse Codex ~/.codex/config.toml [mcp_servers.<name>]
+        let codexPath = mcpConfigPath(for: .codex)
+        if fm.fileExists(atPath: codexPath),
+           let content = try? String(contentsOfFile: codexPath, encoding: .utf8) {
+            var currentServer: String? = nil
+            var inEnvSection = false
+            var codexDrafts: [String: (cmd: String?, args: [String], url: String?, envKeys: Set<String>)] = [:]
+
+            for rawLine in content.components(separatedBy: .newlines) {
+                let line = rawLine.trimmingCharacters(in: .whitespaces)
+                if line.isEmpty || line.hasPrefix("#") { continue }
+                if line.hasPrefix("[") && line.hasSuffix("]") {
+                    let sec = String(line.dropFirst().dropLast()).trimmingCharacters(in: .whitespaces)
+                    if sec.hasPrefix("mcp_servers.") {
+                        let rest = String(sec.dropFirst("mcp_servers.".count))
+                        if rest.hasSuffix(".env") {
+                            currentServer = String(rest.dropLast(".env".count))
+                            inEnvSection = true
+                        } else if !rest.contains(".") {
+                            currentServer = rest
+                            inEnvSection = false
+                        } else {
+                            currentServer = nil
+                            inEnvSection = false
+                        }
+                        if let srv = currentServer, codexDrafts[srv] == nil {
+                            codexDrafts[srv] = (nil, [], nil, [])
+                        }
+                    } else {
+                        currentServer = nil
+                        inEnvSection = false
+                    }
+                    continue
+                }
+                guard let srv = currentServer, let eqIdx = line.firstIndex(of: "=") else { continue }
+                let key = line[..<eqIdx].trimmingCharacters(in: .whitespaces)
+                let val = line[line.index(after: eqIdx)...].trimmingCharacters(in: .whitespaces)
+                if inEnvSection {
+                    if !key.isEmpty { codexDrafts[srv]?.envKeys.insert(key) }
+                } else if key == "command" {
+                    codexDrafts[srv]?.cmd = val.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                } else if key == "url" {
+                    codexDrafts[srv]?.url = val.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                } else if key == "args" {
+                    let inner = val.trimmingCharacters(in: CharacterSet(charactersIn: "[] "))
+                    let parts = inner.components(separatedBy: ",").map {
+                        $0.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                    }.filter { !$0.isEmpty }
+                    codexDrafts[srv]?.args = parts
+                }
+            }
+
+            for (name, info) in codexDrafts {
+                var draft = merged[name] ?? Draft()
+                draft.platforms.insert(.codex)
+                draft.configPaths[.codex] = codexPath
+                if let cmd = info.cmd {
+                    let line = ([cmd] + info.args).joined(separator: " ")
+                    if !draft.commands.contains(line) { draft.commands.append(line) }
+                } else if let url = info.url {
+                    if !draft.commands.contains(url) { draft.commands.append(url) }
+                }
+                for k in info.envKeys { draft.envKeys.insert(k) }
+                merged[name] = draft
+            }
+        }
+
+        mcpServers = merged.map { (name, d) in
+            McpServerItemModel(
+                id: name,
+                commandSummary: d.commands.first ?? "configured in local config",
+                envKeys: d.envKeys.sorted(),
+                platforms: d.platforms,
+                configPaths: d.configPaths
+            )
+        }.sorted { $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending }
+    }
+
+    func reloadPlugins() {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser.path
+        let pluginsRoot = "\(home)/.gemini/config/plugins"
+        guard let dirs = try? fm.contentsOfDirectory(atPath: pluginsRoot) else {
+            plugins = []
+            return
+        }
+        var loaded: [PluginItemModel] = []
+        for dirName in dirs.sorted() {
+            if dirName.hasPrefix(".") { continue }
+            let pluginPath = "\(pluginsRoot)/\(dirName)"
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: pluginPath, isDirectory: &isDir), isDir.boolValue else { continue }
+
+            let jsonPath = "\(pluginPath)/plugin.json"
+            var displayName = dirName
+            var version = "已安装"
+            var authorName = "Antigravity Plugin"
+            var desc = "已安装的 Antigravity 插件"
+            var repoUrl = ""
+            let hasJson = fm.fileExists(atPath: jsonPath)
+            if hasJson,
+               let data = fm.contents(atPath: jsonPath),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                if let dn = json["displayName"] as? String, !dn.isEmpty { displayName = dn }
+                if let v = json["version"] as? String, !v.isEmpty { version = "v\(v)" }
+                if let d = json["description"] as? String, !d.isEmpty { desc = d }
+                if let r = json["repository"] as? String { repoUrl = r }
+                if let author = json["author"] as? [String: Any], let an = author["name"] as? String, !an.isEmpty {
+                    authorName = an
+                }
+            }
+
+            let skillsSub = "\(pluginPath)/skills"
+            var bundled: [String] = []
+            if let skillDirs = try? fm.contentsOfDirectory(atPath: skillsSub) {
+                for sName in skillDirs.sorted() where !sName.hasPrefix(".") {
+                    var sIsDir: ObjCBool = false
+                    if fm.fileExists(atPath: "\(skillsSub)/\(sName)", isDirectory: &sIsDir), sIsDir.boolValue {
+                        bundled.append(sName)
+                    }
+                }
+            }
+
+            loaded.append(PluginItemModel(
+                id: dirName,
+                displayName: displayName,
+                version: version,
+                authorName: authorName,
+                descriptionText: desc,
+                repositoryUrl: repoUrl,
+                pluginPath: pluginPath,
+                pluginJsonPath: hasJson ? jsonPath : nil,
+                bundledSkills: bundled
+            ))
+        }
+        plugins = loaded
     }
 
     private func setMount(skill: SkillItemModel, platform: AgentPlatform, enabled: Bool) {
@@ -1016,11 +1242,20 @@ final class SkillStore: ObservableObject {
 // MARK: - Observable UI State (Zero @State Macro Dependency)
 
 final class SkillHubUIState: ObservableObject {
+    @Published var activeTab: HubTab = .skills
     @Published var selectedCategoryId: String = "ALL"
     @Published var filterPlatform: AgentPlatform? = nil
     @Published var searchText: String = ""
     @Published var expandedSkillIds: Set<String> = []
     @Published var hoveredCategoryId: String? = nil
+
+    // MCP & Plugins tab UI state
+    @Published var mcpSidebarFilter: String = "ALL"
+    @Published var mcpPlatformFilter: AgentPlatform? = nil
+    @Published var mcpSearchText: String = ""
+    @Published var expandedMcpIds: Set<String> = []
+    @Published var pluginSearchText: String = ""
+    @Published var expandedPluginIds: Set<String> = []
 
     // Left sidebar inline category create / rename
     @Published var showAddCategoryBox: Bool = false
@@ -1064,7 +1299,6 @@ struct IOSToggleSwitch: View {
         .buttonStyle(.plain)
     }
 }
-
 // MARK: - Collapsible Skill Card View
 
 struct CollapsibleSkillCardView: View {
@@ -1322,6 +1556,28 @@ struct CollapsibleSkillCardView: View {
                         .fixedSize()
 
                         Spacer()
+
+                        if skill.sourceKind == .plugin, let pluginId = skill.pluginName {
+                            Button(action: {
+                                ui.expandedPluginIds.insert(pluginId)
+                                ui.pluginSearchText = ""
+                                ui.activeTab = .plugins
+                            }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "puzzlepiece.extension")
+                                        .font(.system(size: 11))
+                                    Text("查看插件")
+                                        .font(.system(size: 11, weight: .medium))
+                                }
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 4.5)
+                                .background(palette.purpleAccent.opacity(0.14))
+                                .overlay(RoundedRectangle(cornerRadius: 6).stroke(palette.purpleAccent.opacity(0.35), lineWidth: 1))
+                                .foregroundColor(palette.purpleAccent)
+                                .cornerRadius(6)
+                            }
+                            .buttonStyle(.plain)
+                        }
 
                         Button(action: {
                             NSWorkspace.shared.open(URL(fileURLWithPath: skill.skillMdPath))
@@ -1612,7 +1868,6 @@ struct ModalPlatformCheck: View {
         .buttonStyle(.plain)
     }
 }
-
 // MARK: - Delete Category Confirmation Modal
 
 struct DeleteCategoryModalView: View {
@@ -1754,6 +2009,42 @@ struct SkillHubRootView: View {
                             .foregroundColor(palette.primaryText)
                     }
 
+                    // v1.1 Segmented View Switcher
+                    HStack(spacing: 2) {
+                        ForEach(HubTab.allCases) { tab in
+                            let isSelected = ui.activeTab == tab
+                            let count: Int = {
+                                switch tab {
+                                case .skills: return visibleBaseSkills.count
+                                case .mcp: return store.mcpServers.count
+                                case .plugins: return store.plugins.count
+                                }
+                            }()
+                            Button(action: { ui.activeTab = tab }) {
+                                HStack(spacing: 5) {
+                                    Text(tab.title)
+                                        .font(.system(size: 11.5, weight: .semibold))
+                                    Text("\(count)")
+                                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 1)
+                                        .background(isSelected ? Color.white.opacity(0.22) : palette.chipBg)
+                                        .cornerRadius(99)
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(isSelected ? palette.accentBlue : Color.clear)
+                                .foregroundColor(isSelected ? .white : palette.secondaryText)
+                                .cornerRadius(6.5)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(3)
+                    .background(palette.inputBg)
+                    .overlay(RoundedRectangle(cornerRadius: 8.5).stroke(palette.cardBorder, lineWidth: 1))
+                    .cornerRadius(8.5)
+
                     // Clickable Fixed Vault Quick-Access Pill
                     HStack(spacing: 0) {
                         Button(action: {
@@ -1823,22 +2114,24 @@ struct SkillHubRootView: View {
                     .buttonStyle(.plain)
                     .help("重新扫描本地状态，并将命令行/GitHub 新装到外部目录的 Skill 自动归入固定仓库")
 
-                    Button(action: {
-                        ui.showImportModal = true
-                    }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 11, weight: .bold))
-                            Text("导入 Skill")
-                                .font(.system(size: 11.5, weight: .bold))
+                    if ui.activeTab == .skills {
+                        Button(action: {
+                            ui.showImportModal = true
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 11, weight: .bold))
+                                Text("导入 Skill")
+                                    .font(.system(size: 11.5, weight: .bold))
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(palette.accentBlue)
+                            .foregroundColor(.white)
+                            .cornerRadius(8)
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(palette.accentBlue)
-                        .foregroundColor(.white)
-                        .cornerRadius(8)
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
 
                     Button(action: { store.isDarkTheme.toggle() }) {
                         Image(systemName: store.isDarkTheme ? "sun.max.fill" : "moon.fill")
@@ -1877,7 +2170,8 @@ struct SkillHubRootView: View {
                     Divider().background(palette.divider)
                 }
 
-                // Two-Column Body: Left Category Sidebar + Right Main Content
+                // Two-Column Body: Skills / MCP / Plugins
+                if ui.activeTab == .skills {
                 HStack(spacing: 0) {
                     // LEFT SIDEBAR: Categories (Add / Inline Rename / Delete with Confirmation)
                     VStack(alignment: .leading, spacing: 10) {
@@ -2219,6 +2513,11 @@ struct SkillHubRootView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(palette.windowBg)
                 }
+                } else if ui.activeTab == .mcp {
+                    McpHubBodyView(store: store, ui: ui, palette: palette)
+                } else {
+                    PluginsHubBodyView(store: store, ui: ui, palette: palette)
+                }
             }
 
             // Centered Modals
@@ -2255,6 +2554,580 @@ struct HorizontalPlatformTab: View {
                 .cornerRadius(8)
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - MCP Services View (Read-Only Inventory + Quick Config Access)
+
+struct McpHubBodyView: View {
+    @ObservedObject var store: SkillStore
+    @ObservedObject var ui: SkillHubUIState
+    let palette: ThemePalette
+
+    private var filteredServers: [McpServerItemModel] {
+        let q = ui.mcpSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return store.mcpServers.filter { srv in
+            switch ui.mcpSidebarFilter {
+            case "MULTI":
+                if srv.platforms.count < 2 { return false }
+            case "AG":
+                if !srv.platforms.contains(.antigravity) { return false }
+            case "CX":
+                if !srv.platforms.contains(.codex) { return false }
+            case "CL":
+                if !srv.platforms.contains(.claude) { return false }
+            default:
+                break
+            }
+            if let pf = ui.mcpPlatformFilter, !srv.platforms.contains(pf) {
+                return false
+            }
+            if !q.isEmpty {
+                let hay = "\(srv.id) \(srv.commandSummary) \(srv.envKeys.joined(separator: " "))".lowercased()
+                if !hay.contains(q) { return false }
+            }
+            return true
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            // Left Sidebar
+            VStack(alignment: .leading, spacing: 8) {
+                Text("MCP 来源视图")
+                    .font(.system(size: 11.5, weight: .bold))
+                    .foregroundColor(palette.mutedText)
+                    .padding(.horizontal, 6)
+
+                sidebarRow(key: "ALL", title: "全部 MCP 服务", count: store.mcpServers.count)
+                sidebarRow(key: "MULTI", title: "多端共用", count: store.mcpServers.filter { $0.platforms.count >= 2 }.count)
+                sidebarRow(key: "AG", title: "Antigravity", count: store.mcpServers.filter { $0.platforms.contains(.antigravity) }.count)
+                sidebarRow(key: "CX", title: "Codex", count: store.mcpServers.filter { $0.platforms.contains(.codex) }.count)
+                sidebarRow(key: "CL", title: "Claude Code", count: store.mcpServers.filter { $0.platforms.contains(.claude) }.count)
+
+                Spacer()
+
+                Divider().background(palette.divider)
+
+                Text("配置文件快捷打开")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(palette.mutedText)
+                    .padding(.horizontal, 4)
+                    .padding(.top, 4)
+
+                ForEach(AgentPlatform.allCases) { pf in
+                    let path = store.mcpConfigPath(for: pf)
+                    let exists = FileManager.default.fileExists(atPath: path)
+                    Button(action: {
+                        if exists {
+                            NSWorkspace.shared.open(URL(fileURLWithPath: path))
+                        } else {
+                            store.showBanner("未检测到 \(pf.fullName) MCP 配置文件: \(SkillStore.shortenHomePath(path))", isError: true)
+                        }
+                    }) {
+                        HStack {
+                            Text(pf.fullName)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(exists ? palette.primaryText : palette.mutedText)
+                            Spacer()
+                            Text(exists ? "↗" : "未创建")
+                                .font(.system(size: 10.5))
+                                .foregroundColor(exists ? palette.accentBlue : palette.mutedText)
+                        }
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 6)
+                        .background(palette.inputBg)
+                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(palette.cardBorder, lineWidth: 1))
+                        .cornerRadius(7)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(12)
+            .frame(width: 224)
+            .frame(maxHeight: .infinity)
+            .background(palette.sidebarBg)
+
+            Divider().background(palette.divider)
+
+            // Right Pane
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    HorizontalPlatformTab(title: "全部平台", selected: ui.mcpPlatformFilter == nil, palette: palette) {
+                        ui.mcpPlatformFilter = nil
+                    }
+                    ForEach(AgentPlatform.allCases) { pf in
+                        HorizontalPlatformTab(title: pf.fullName, selected: ui.mcpPlatformFilter == pf, palette: palette) {
+                            ui.mcpPlatformFilter = (ui.mcpPlatformFilter == pf) ? nil : pf
+                        }
+                    }
+
+                    Spacer()
+
+                    HStack(spacing: 6) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 11.5))
+                            .foregroundColor(palette.mutedText)
+                        TextField("搜索 MCP 名称或命令...", text: $ui.mcpSearchText)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 12))
+                            .foregroundColor(palette.primaryText)
+                            .frame(width: 170)
+                    }
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5.5)
+                    .background(palette.inputBg)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.cardBorder, lineWidth: 1))
+                    .cornerRadius(8)
+                }
+
+                HStack {
+                    Text("只读盘点模式：自动聚合三端配置，环境变量值已脱敏隐藏，可展开一键打开原配置文件编辑。")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(palette.mutedText)
+                    Spacer()
+                }
+
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        if filteredServers.isEmpty {
+                            VStack(spacing: 8) {
+                                Image(systemName: "server.rack")
+                                    .font(.system(size: 28))
+                                    .foregroundColor(palette.mutedText)
+                                Text("当前筛选条件下暂无 MCP 服务")
+                                    .font(.system(size: 13))
+                                    .foregroundColor(palette.secondaryText)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 70)
+                        } else {
+                            ForEach(filteredServers) { srv in
+                                CollapsibleMcpCardView(server: srv, ui: ui, palette: palette)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(palette.windowBg)
+        }
+    }
+
+    private func sidebarRow(key: String, title: String, count: Int) -> some View {
+        let selected = ui.mcpSidebarFilter == key
+        return Button(action: { ui.mcpSidebarFilter = key }) {
+            HStack {
+                Text(title)
+                    .font(.system(size: 12, weight: selected ? .semibold : .regular))
+                    .foregroundColor(selected ? palette.primaryText : palette.secondaryText)
+                Spacer()
+                Text("\(count)")
+                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                    .foregroundColor(palette.mutedText)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1.5)
+                    .background(palette.chipBg)
+                    .cornerRadius(99)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7.5)
+            .background(selected ? palette.accentBlue.opacity(0.16) : Color.clear)
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(selected ? palette.accentBlue.opacity(0.45) : Color.clear, lineWidth: 1))
+            .cornerRadius(8)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct CollapsibleMcpCardView: View {
+    let server: McpServerItemModel
+    @ObservedObject var ui: SkillHubUIState
+    let palette: ThemePalette
+
+    private var isExpanded: Bool {
+        ui.expandedMcpIds.contains(server.id)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 7) {
+                        Text(server.id)
+                            .font(.system(size: 13.5, weight: .bold, design: .monospaced))
+                            .foregroundColor(palette.primaryText)
+
+                        ForEach(AgentPlatform.allCases.filter { server.platforms.contains($0) }) { pf in
+                            Text(pf.fullName)
+                                .font(.system(size: 10, weight: .semibold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(palette.accentBlue.opacity(0.14))
+                                .foregroundColor(palette.accentBlue)
+                                .cornerRadius(5)
+                        }
+
+                        Text("只读盘点")
+                            .font(.system(size: 10, weight: .semibold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(palette.warnColor.opacity(0.14))
+                            .foregroundColor(palette.warnColor)
+                            .cornerRadius(5)
+                    }
+
+                    Text(server.commandSummary)
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .foregroundColor(palette.mutedText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Spacer()
+
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(palette.mutedText)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if isExpanded { ui.expandedMcpIds.remove(server.id) }
+                else { ui.expandedMcpIds.insert(server.id) }
+            }
+
+            if isExpanded {
+                Divider().background(palette.divider)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(server.commandSummary)
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .foregroundColor(palette.primaryText)
+                        .padding(9)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(palette.inputBg)
+                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(palette.cardBorder, lineWidth: 1))
+                        .cornerRadius(7)
+
+                    if !server.envKeys.isEmpty {
+                        Text("环境变量键（值已隐藏）: \(server.envKeys.joined(separator: ", "))")
+                            .font(.system(size: 11.5))
+                            .foregroundColor(palette.secondaryText)
+                    }
+
+                    HStack(spacing: 8) {
+                        ForEach(AgentPlatform.allCases.filter { server.configPaths[$0] != nil }) { pf in
+                            if let path = server.configPaths[pf] {
+                                Button(action: {
+                                    NSWorkspace.shared.open(URL(fileURLWithPath: path))
+                                }) {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "doc.text")
+                                            .font(.system(size: 11))
+                                        Text("打开 \(pf.fullName) 配置")
+                                            .font(.system(size: 11, weight: .medium))
+                                    }
+                                    .padding(.horizontal, 9)
+                                    .padding(.vertical, 4.5)
+                                    .background(palette.cardBg)
+                                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(palette.cardBorder, lineWidth: 1))
+                                    .foregroundColor(palette.primaryText)
+                                    .cornerRadius(6)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        Spacer()
+                    }
+                }
+                .padding(14)
+                .background(palette.windowBg.opacity(0.45))
+            }
+        }
+        .background(palette.cardBg)
+        .overlay(RoundedRectangle(cornerRadius: 11).stroke(palette.cardBorder, lineWidth: 1))
+        .cornerRadius(11)
+    }
+}
+
+// MARK: - Plugins Inventory View
+
+struct PluginsHubBodyView: View {
+    @ObservedObject var store: SkillStore
+    @ObservedObject var ui: SkillHubUIState
+    let palette: ThemePalette
+
+    private var filteredPlugins: [PluginItemModel] {
+        let q = ui.pluginSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if q.isEmpty { return store.plugins }
+        return store.plugins.filter { p in
+            "\(p.id) \(p.displayName) \(p.descriptionText) \(p.authorName) \(p.bundledSkills.joined(separator: " "))"
+                .lowercased()
+                .contains(q)
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("插件分组")
+                    .font(.system(size: 11.5, weight: .bold))
+                    .foregroundColor(palette.mutedText)
+                    .padding(.horizontal, 6)
+
+                HStack {
+                    Text("Antigravity 已安装插件")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(palette.primaryText)
+                    Spacer()
+                    Text("\(store.plugins.count)")
+                        .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                        .foregroundColor(palette.mutedText)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1.5)
+                        .background(palette.chipBg)
+                        .cornerRadius(99)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7.5)
+                .background(palette.accentBlue.opacity(0.16))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.accentBlue.opacity(0.45), lineWidth: 1))
+                .cornerRadius(8)
+
+                Spacer()
+
+                Divider().background(palette.divider)
+
+                Button(action: {
+                    let home = FileManager.default.homeDirectoryForCurrentUser.path
+                    NSWorkspace.shared.open(URL(fileURLWithPath: "\(home)/.gemini/config/plugins"))
+                }) {
+                    HStack {
+                        Text("~/.gemini/config/plugins")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(palette.primaryText)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                        Text("↗")
+                            .font(.system(size: 10.5))
+                            .foregroundColor(palette.accentBlue)
+                    }
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 6)
+                    .background(palette.inputBg)
+                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(palette.cardBorder, lineWidth: 1))
+                    .cornerRadius(7)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(12)
+            .frame(width: 224)
+            .frame(maxHeight: .infinity)
+            .background(palette.sidebarBg)
+
+            Divider().background(palette.divider)
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    let totalBundled = store.plugins.reduce(0) { $0 + $1.bundledSkills.count }
+                    Text("共检测到 \(store.plugins.count) 个插件（含 \(totalBundled) 个内置 Skill）")
+                        .font(.system(size: 12))
+                        .foregroundColor(palette.mutedText)
+
+                    Spacer()
+
+                    HStack(spacing: 6) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 11.5))
+                            .foregroundColor(palette.mutedText)
+                        TextField("搜索插件名称或内置 Skill...", text: $ui.pluginSearchText)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 12))
+                            .foregroundColor(palette.primaryText)
+                            .frame(width: 190)
+                    }
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5.5)
+                    .background(palette.inputBg)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.cardBorder, lineWidth: 1))
+                    .cornerRadius(8)
+                }
+
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        if filteredPlugins.isEmpty {
+                            VStack(spacing: 8) {
+                                Image(systemName: "puzzlepiece.extension")
+                                    .font(.system(size: 28))
+                                    .foregroundColor(palette.mutedText)
+                                Text("暂未检测到匹配的插件")
+                                    .font(.system(size: 13))
+                                    .foregroundColor(palette.secondaryText)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 70)
+                        } else {
+                            ForEach(filteredPlugins) { plugin in
+                                CollapsiblePluginCardView(plugin: plugin, ui: ui, palette: palette)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(palette.windowBg)
+        }
+    }
+}
+
+struct CollapsiblePluginCardView: View {
+    let plugin: PluginItemModel
+    @ObservedObject var ui: SkillHubUIState
+    let palette: ThemePalette
+
+    private var isExpanded: Bool {
+        ui.expandedPluginIds.contains(plugin.id)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 7) {
+                        Text("🧩 \(plugin.displayName)")
+                            .font(.system(size: 13.5, weight: .bold))
+                            .foregroundColor(palette.primaryText)
+
+                        Text(plugin.version)
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(palette.purpleAccent.opacity(0.14))
+                            .foregroundColor(palette.purpleAccent)
+                            .cornerRadius(5)
+
+                        Text("\(plugin.bundledSkills.count) 个关联 Skill")
+                            .font(.system(size: 10, weight: .semibold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(palette.accentBlue.opacity(0.14))
+                            .foregroundColor(palette.accentBlue)
+                            .cornerRadius(5)
+                    }
+
+                    Text(plugin.descriptionText)
+                        .font(.system(size: 11.5))
+                        .foregroundColor(palette.mutedText)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(palette.mutedText)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if isExpanded { ui.expandedPluginIds.remove(plugin.id) }
+                else { ui.expandedPluginIds.insert(plugin.id) }
+            }
+
+            if isExpanded {
+                Divider().background(palette.divider)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("插件 ID: \(plugin.id)  ·  作者: \(plugin.authorName)")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(palette.secondaryText)
+
+                    if !plugin.bundledSkills.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("包含的 Skill（点击跳转到 Skills 页定位）:")
+                                .font(.system(size: 11.5))
+                                .foregroundColor(palette.mutedText)
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 6) {
+                                    ForEach(plugin.bundledSkills, id: \.self) { sk in
+                                        Button(action: {
+                                            ui.selectedCategoryId = "ALL"
+                                            ui.filterPlatform = nil
+                                            ui.searchText = sk
+                                            ui.expandedSkillIds.insert(sk)
+                                            ui.activeTab = .skills
+                                        }) {
+                                            Text("\(sk) →")
+                                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                                .padding(.horizontal, 8)
+                                                .padding(.vertical, 4)
+                                                .background(palette.accentBlue.opacity(0.14))
+                                                .overlay(RoundedRectangle(cornerRadius: 6).stroke(palette.accentBlue.opacity(0.32), lineWidth: 1))
+                                                .foregroundColor(palette.accentBlue)
+                                                .cornerRadius(6)
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    HStack(spacing: 8) {
+                        Button(action: {
+                            NSWorkspace.shared.open(URL(fileURLWithPath: plugin.pluginPath))
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "folder")
+                                    .font(.system(size: 11))
+                                Text("打开插件目录")
+                                    .font(.system(size: 11, weight: .medium))
+                            }
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 4.5)
+                            .background(palette.cardBg)
+                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(palette.cardBorder, lineWidth: 1))
+                            .foregroundColor(palette.primaryText)
+                            .cornerRadius(6)
+                        }
+                        .buttonStyle(.plain)
+
+                        if let jPath = plugin.pluginJsonPath {
+                            Button(action: {
+                                NSWorkspace.shared.open(URL(fileURLWithPath: jPath))
+                            }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "doc.text")
+                                        .font(.system(size: 11))
+                                    Text("查看 plugin.json")
+                                        .font(.system(size: 11, weight: .medium))
+                                }
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 4.5)
+                                .background(palette.cardBg)
+                                .overlay(RoundedRectangle(cornerRadius: 6).stroke(palette.cardBorder, lineWidth: 1))
+                                .foregroundColor(palette.primaryText)
+                                .cornerRadius(6)
+                            }
+                            .buttonStyle(.plain)
+                        }
+
+                        Spacer()
+                    }
+                }
+                .padding(14)
+                .background(palette.windowBg.opacity(0.45))
+            }
+        }
+        .background(palette.cardBg)
+        .overlay(RoundedRectangle(cornerRadius: 11).stroke(palette.cardBorder, lineWidth: 1))
+        .cornerRadius(11)
     }
 }
 
