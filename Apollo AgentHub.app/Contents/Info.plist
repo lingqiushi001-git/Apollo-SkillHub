@@ -5,25 +5,25 @@
   <key>CFBundleDevelopmentRegion</key>
   <string>zh_CN</string>
   <key>CFBundleDisplayName</key>
-  <string>Apollo SkillHub</string>
+  <string>Apollo AgentHub</string>
   <key>CFBundleExecutable</key>
-  <string>ApolloSkillHub</string>
+  <string>ApolloAgentHub</string>
   <key>CFBundleIconFile</key>
   <string>AppIcon</string>
   <key>CFBundleIconName</key>
   <string>AppIcon</string>
   <key>CFBundleIdentifier</key>
-  <string>io.github.apollo.skillhub</string>
+  <string>io.github.apollo.agenthub</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>Apollo SkillHub</string>
+  <string>Apollo AgentHub</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>1.1.0</string>
+  <string>1.3.0</string>
   <key>CFBundleVersion</key>
-  <string>2</string>
+  <string>4</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
 </dict>
