@@ -10,7 +10,14 @@
 
 ## ✨ 核心特性 (Features)
 
-### 1. 双层空间架构（v1.3.0 重磅升级）
+### 0. v2.0.0 精密路由工作台重磅升级
+- **三栏精密路由工作台**：升级为 Obsidian Graphite（深石墨）与 Porcelain Paper（冷白）双主题高公差界面（默认 `1180×740`），彻底移除 Emoji 结构图标与厚重折叠卡片。
+  - **左栏（用途分组全量管理）**：Skills / MCP / Plugins 全面支持**内联新建、悬浮重命名、拖拽排序（持久化）与安全删除迁移**；Skills 底部采用克制轻量估算读数，把空间完整留给分组管理。
+  - **中栏（行内直控路由矩阵）**：每行直接排布 `AGY / Codex / Claude` 独立路由触点键与三态总开关，点击即刻拨动三端软链接或一键同步 MCP。
+  - **右栏（常驻检查器 Inspector）**：选中即看三端路由拓扑图、`SKILL.md` 真实源码、MCP JSON/TOML 脱敏配置预览、插件内置技能跳转及实时编辑研究笔记。
+- **全新 Tri-Route Hub 图标**：纯矢量 CoreGraphics 绘制，以「左侧中心枢纽 → 右侧三端分叉路由」呼应应用核心定位，与 Apollo AgentMeter 组成原生 macOS 套件。
+
+### 1. 双层空间架构
 - **本地运行态三资产**：顶栏分段控制纯粹聚焦本机已管理的三大能力载体——**`Skills 技能` · `MCP 服务` · `Plugins 插件`**。
 - **独立「★ 关注收藏」研究雷达**：顶栏右侧以竖线独立区隔的琥珀金空间，专门用于收录只研究、只关注、暂不下载到本地的 **Skill / Plugin / MCP / CLI 工具 / GitHub 仓库**；独立存储于 `~/.agents/skills-vault/.watchlist.json`，不克隆代码到本地、不消耗 Agent 上下文。
   - 支持 **5 档研究状态**（`待研究 / 研究中 / 已评估-推荐 / 持续关注 / 暂不安装`）、标签、可编辑研究笔记、CLI 安装命令一键复制；
@@ -42,7 +49,7 @@
 ## 📦 安装方式 (Installation)
 
 ### 方式一：通过 Releases DMG 安装（推荐）
-1. 在 [Releases](../../releases) 页面下载最新的 **`Apollo-AgentHub-1.3.0.dmg`**。
+1. 在 [Releases](../../releases) 页面下载最新的 **`Apollo-AgentHub-2.0.0.dmg`**。
 2. 双击挂载 DMG 镜像，将 **`Apollo AgentHub.app`** 拖入 **`Applications`** 文件夹。
 3. 从「应用程序」或启动台打开即可使用（自动无缝继承原 Apollo SkillHub 的仓库路径与分类配置）。
 

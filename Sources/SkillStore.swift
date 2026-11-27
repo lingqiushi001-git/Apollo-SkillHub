@@ -223,32 +223,32 @@ final class SkillStore: ObservableObject {
 
     private static var defaultCategories: [SkillCategory] {
         [
-            SkillCategory(id: "ui-frontend", name: "🎨 UI 与前端设计", sortOrder: 0),
-            SkillCategory(id: "video-media", name: "🎬 视频与多媒体", sortOrder: 1),
-            SkillCategory(id: "finance-thinking", name: "📈 投研与思维框架", sortOrder: 2),
-            SkillCategory(id: "re-debug", name: "🔍 逆向与调试工程", sortOrder: 3),
-            SkillCategory(id: "info-productivity", name: "📰 资讯与效率办公", sortOrder: 4),
-            SkillCategory(id: "system-config", name: "⚙️ 系统与配置管理", sortOrder: 5)
+            SkillCategory(id: "ui-frontend", name: "UI 与前端设计", sortOrder: 0),
+            SkillCategory(id: "video-media", name: "视频与多媒体", sortOrder: 1),
+            SkillCategory(id: "finance-thinking", name: "投研与思维框架", sortOrder: 2),
+            SkillCategory(id: "re-debug", name: "逆向与调试工程", sortOrder: 3),
+            SkillCategory(id: "info-productivity", name: "资讯与效率办公", sortOrder: 4),
+            SkillCategory(id: "system-config", name: "系统与配置管理", sortOrder: 5)
         ]
     }
 
     private static var defaultMcpCategories: [SkillCategory] {
         [
-            SkillCategory(id: "mcp-browser", name: "🌐 浏览器与网页", sortOrder: 0),
-            SkillCategory(id: "mcp-dev", name: "💻 开发与代码工具", sortOrder: 1),
-            SkillCategory(id: "mcp-data", name: "📁 文件与数据存储", sortOrder: 2),
-            SkillCategory(id: "mcp-auto", name: "🤖 自动化与系统控制", sortOrder: 3),
-            SkillCategory(id: "mcp-other", name: "🔌 其他服务", sortOrder: 4)
+            SkillCategory(id: "mcp-browser", name: "浏览器与网页", sortOrder: 0),
+            SkillCategory(id: "mcp-dev", name: "开发与代码工具", sortOrder: 1),
+            SkillCategory(id: "mcp-data", name: "文件与数据存储", sortOrder: 2),
+            SkillCategory(id: "mcp-auto", name: "自动化与系统控制", sortOrder: 3),
+            SkillCategory(id: "mcp-other", name: "其他服务", sortOrder: 4)
         ]
     }
 
     private static var defaultPluginCategories: [SkillCategory] {
         [
-            SkillCategory(id: "pl-docs", name: "📄 文档与办公套件", sortOrder: 0),
-            SkillCategory(id: "pl-browser", name: "🌐 浏览器与桌面控制", sortOrder: 1),
-            SkillCategory(id: "pl-visual", name: "📊 可视化与设计", sortOrder: 2),
-            SkillCategory(id: "pl-dev", name: "⚙️ 开发与工具扩展", sortOrder: 3),
-            SkillCategory(id: "pl-other", name: "🧩 其他插件", sortOrder: 4)
+            SkillCategory(id: "pl-docs", name: "文档与办公套件", sortOrder: 0),
+            SkillCategory(id: "pl-browser", name: "浏览器与桌面控制", sortOrder: 1),
+            SkillCategory(id: "pl-visual", name: "可视化与设计", sortOrder: 2),
+            SkillCategory(id: "pl-dev", name: "开发与工具扩展", sortOrder: 3),
+            SkillCategory(id: "pl-other", name: "其他插件", sortOrder: 4)
         ]
     }
 
@@ -494,7 +494,7 @@ final class SkillStore: ObservableObject {
         )
         watchlist.insert(item, at: 0)
         saveWatchlist()
-        showBanner("★ 已收录「\(finalName)」到关注收藏（未下载到本地）")
+        showBanner("已收录「\(finalName)」到关注收藏（未下载到本地）")
     }
 
     func updateWatchlistItem(_ item: WatchlistItem) {
@@ -510,7 +510,7 @@ final class SkillStore: ObservableObject {
         let name = watchlist[idx].name
         watchlist.remove(at: idx)
         saveWatchlist()
-        showBanner("🗑 已从关注收藏移除「\(name)」")
+        showBanner("已从关注收藏移除「\(name)」")
     }
 
     static func normalizeRepoUrl(_ raw: String) -> String {
@@ -587,7 +587,7 @@ final class SkillStore: ObservableObject {
             self.fetchingWatchIds.remove(item.id)
             switch result {
             case .success(let meta):
-                var updated = item
+                guard var updated = self.watchlist.first(where: { $0.id == item.id }) else { return }
                 updated.starsText = meta.stars
                 updated.language = meta.language
                 updated.pushedAt = meta.pushedAt
@@ -595,7 +595,7 @@ final class SkillStore: ObservableObject {
                     updated.summary = meta.desc
                 }
                 self.updateWatchlistItem(updated)
-                self.showBanner("✅ 已刷新「\(item.name)」元信息（★ \(meta.stars) · \(meta.pushedAt)）")
+                self.showBanner("已刷新「\(item.name)」元信息（Stars \(meta.stars) · \(meta.pushedAt)）")
             case .failure(let err):
                 self.showBanner("抓取失败: \(err.localizedDescription)", isError: true)
             }
@@ -612,7 +612,7 @@ final class SkillStore: ObservableObject {
             if let data = try? encoder.encode(WatchlistFile(version: 1, items: watchlist)) {
                 do {
                     try data.write(to: url, options: .atomic)
-                    showBanner("✅ 已导出 JSON 至 \(Self.shortenHomePath(url.path))")
+                    showBanner("已导出 JSON 至 \(Self.shortenHomePath(url.path))")
                 } catch {
                     showBanner("导出失败: \(error.localizedDescription)", isError: true)
                 }
@@ -642,7 +642,7 @@ final class SkillStore: ObservableObject {
             }
             do {
                 try lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
-                showBanner("✅ 已导出 Markdown 清单至 \(Self.shortenHomePath(url.path))")
+                showBanner("已导出 Markdown 清单至 \(Self.shortenHomePath(url.path))")
             } catch {
                 showBanner("导出失败: \(error.localizedDescription)", isError: true)
             }
@@ -934,17 +934,17 @@ final class SkillStore: ObservableObject {
         saveRegistry()
         reloadMcpServers()
         if let cat = mcpCategories.first(where: { $0.id == categoryId }) {
-            showBanner("🏷️ 已将 MCP「\(serverId)」归入「\(cat.name)」")
+            showBanner("已将 MCP「\(serverId)」归入「\(cat.name)」")
         }
     }
 
     func addMcpCategory(name: String) -> String? {
         let t = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty else { return nil }
+        guard !t.isEmpty, !mcpCategories.contains(where: { $0.name.caseInsensitiveCompare(t) == .orderedSame }) else { return nil }
         let id = "mcp-cat-" + String(UUID().uuidString.prefix(6)).lowercased()
         mcpCategories.append(SkillCategory(id: id, name: t, sortOrder: mcpCategories.count))
         saveRegistry()
-        showBanner("✅ 已新增 MCP 分组「\(t)」")
+        showBanner("已新增 MCP 分组「\(t)」")
         return id
     }
 
@@ -963,7 +963,7 @@ final class SkillStore: ObservableObject {
                 try upsertJsonMcpServer(name: server.id, config: sourceConfig, configPath: targetPath)
             }
             reloadMcpServers()
-            showBanner("✅ 已将 MCP「\(server.id)」同步至 \(target.fullName)")
+            showBanner("已将 MCP「\(server.id)」同步至 \(target.fullName)")
         } catch {
             showBanner("同步 MCP 失败: \(error.localizedDescription)", isError: true)
         }
@@ -982,7 +982,7 @@ final class SkillStore: ObservableObject {
                 try removeJsonMcpServer(name: server.id, configPath: targetPath)
             }
             reloadMcpServers()
-            showBanner("🗑 已从 \(target.fullName) 移除 MCP「\(server.id)」")
+            showBanner("已从 \(target.fullName) 移除 MCP「\(server.id)」")
         } catch {
             showBanner("移除 MCP 失败: \(error.localizedDescription)", isError: true)
         }
@@ -1138,17 +1138,17 @@ final class SkillStore: ObservableObject {
         saveRegistry()
         reloadPlugins()
         if let cat = pluginCategories.first(where: { $0.id == categoryId }) {
-            showBanner("🏷️ 已将插件归入「\(cat.name)」")
+            showBanner("已将插件归入「\(cat.name)」")
         }
     }
 
     func addPluginCategory(name: String) -> String? {
         let t = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty else { return nil }
+        guard !t.isEmpty, !pluginCategories.contains(where: { $0.name.caseInsensitiveCompare(t) == .orderedSame }) else { return nil }
         let id = "pl-cat-" + String(UUID().uuidString.prefix(6)).lowercased()
         pluginCategories.append(SkillCategory(id: id, name: t, sortOrder: pluginCategories.count))
         saveRegistry()
-        showBanner("✅ 已新增插件分组「\(t)」")
+        showBanner("已新增插件分组「\(t)」")
         return id
     }
 
@@ -1166,11 +1166,11 @@ final class SkillStore: ObservableObject {
                 if fm.fileExists(atPath: dst) { try fm.removeItem(atPath: dst) }
                 try fm.moveItem(atPath: plugin.pluginPath, toPath: dst)
                 reloadSkills(autoIngest: false)
-                showBanner(nextEnabled ? "✅ 已启用 Antigravity 插件「\(plugin.displayName)」" : "⏸ 已停用 Antigravity 插件「\(plugin.displayName)」")
+                showBanner(nextEnabled ? "已启用 Antigravity 插件「\(plugin.displayName)」" : "已停用 Antigravity 插件「\(plugin.displayName)」")
             case .codex:
                 try CodexTomlHelper.setPluginEnabled(pluginId: plugin.rawId, enabled: nextEnabled, configPath: mcpConfigPath(for: .codex))
                 reloadPlugins()
-                showBanner(nextEnabled ? "✅ 已在 Codex config.toml 启用插件「\(plugin.displayName)」" : "⏸ 已在 Codex config.toml 停用插件「\(plugin.displayName)」")
+                showBanner(nextEnabled ? "已在 Codex config.toml 启用插件「\(plugin.displayName)」" : "已在 Codex config.toml 停用插件「\(plugin.displayName)」")
             case .claude: break
             }
         } catch {
@@ -1184,7 +1184,7 @@ final class SkillStore: ObservableObject {
         do {
             try FileManager.default.trashItem(at: URL(fileURLWithPath: plugin.pluginPath), resultingItemURL: nil)
             reloadSkills(autoIngest: false)
-            showBanner("🗑 已将插件「\(plugin.displayName)」移入废纸篓")
+            showBanner("已将插件「\(plugin.displayName)」移入废纸篓")
         } catch {
             showBanner("卸载插件失败: \(error.localizedDescription)", isError: true)
         }
@@ -1214,7 +1214,7 @@ final class SkillStore: ObservableObject {
             if fm.fileExists(atPath: "\(dest)/.git") { try? fm.removeItem(atPath: "\(dest)/.git") }
             sharePluginSkills(pluginDir: dest, platforms: shareSkillsTo)
             reloadSkills(autoIngest: false)
-            showBanner("✅ 已全局安装插件「\(pluginId)」")
+            showBanner("已全局安装插件「\(pluginId)」")
         } catch {
             showBanner("安装插件失败: \(error.localizedDescription)", isError: true)
         }
@@ -1270,7 +1270,7 @@ final class SkillStore: ObservableObject {
             do {
                 try task.run(); task.waitUntilExit()
                 if task.terminationStatus == 0 {
-                    DispatchQueue.main.async { self.reloadPlugins(); self.showBanner("✅ 已通过 Codex CLI 安装插件「\(trimmed)」"); onSuccess?() }
+                    DispatchQueue.main.async { self.reloadPlugins(); self.showBanner("已通过 Codex CLI 安装插件「\(trimmed)」"); onSuccess?() }
                 } else {
                     let errMsg = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "codex plugin add 失败"
                     self.showBanner("Codex 插件安装失败: \(errMsg.prefix(140))", isError: true)
@@ -1351,7 +1351,7 @@ final class SkillStore: ObservableObject {
             saveRegistry()
         }
         reloadSkills(autoIngest: false)
-        showBanner(nextEnabled ? "✅ 已在 \(platform.fullName) 启用「\(skill.displayName)」" : "⏸ 已从 \(platform.fullName) 停用「\(skill.displayName)」")
+        showBanner(nextEnabled ? "已在 \(platform.fullName) 启用「\(skill.displayName)」" : "已从 \(platform.fullName) 停用「\(skill.displayName)」")
     }
 
     func toggleMasterSwitch(for skill: SkillItemModel) {
@@ -1368,7 +1368,7 @@ final class SkillStore: ObservableObject {
             }
             reloadSkills(autoIngest: false)
             if let err = firstError { showBanner(err.localizedDescription, isError: true) }
-            else { showBanner("⏸ 已停用「\(skill.displayName)」") }
+            else { showBanner("已停用「\(skill.displayName)」") }
         } else {
             let saved = (registry.lastEnabledPlatforms[skill.id] ?? []).compactMap { AgentPlatform(rawValue: $0) }.filter { mutablePlatforms.contains($0) }
             let defaultInstalled = mutablePlatforms.filter { isPlatformInstalled($0) }
@@ -1378,7 +1378,7 @@ final class SkillStore: ObservableObject {
             }
             reloadSkills(autoIngest: false)
             if let err = firstError { showBanner(err.localizedDescription, isError: true) }
-            else { showBanner("✅ 已启用「\(skill.displayName)」") }
+            else { showBanner("已启用「\(skill.displayName)」") }
         }
     }
 
@@ -1398,8 +1398,8 @@ final class SkillStore: ObservableObject {
         }
         saveRegistry()
         reloadSkills(autoIngest: false)
-        if conflictCount > 0 { showBanner("⚠️ 批量操作完成，但有 \(conflictCount) 处非软链接冲突，请点击「刷新」归档", isError: true) }
-        else { showBanner(enabled ? "✅ 已一键启用当前分类下的所有用户技能" : "⏸ 已一键停用当前分类下的所有用户技能") }
+        if conflictCount > 0 { showBanner("批量操作完成，但有 \(conflictCount) 处非软链接冲突，请点击「刷新」归档", isError: true) }
+        else { showBanner(enabled ? "已一键启用当前分类下的所有用户技能" : "已一键停用当前分类下的所有用户技能") }
     }
 
     // MARK: - Skill Lifecycle (Trash / Demote to Watchlist / Update)
@@ -1431,7 +1431,7 @@ final class SkillStore: ObservableObject {
             registry.skillSources.removeValue(forKey: skill.id)
             saveRegistry()
             reloadSkills(autoIngest: false)
-            showBanner(saveToWatchlist ? "📦 已卸载「\(skill.displayName)」并转存至关注收藏" : "🗑 已将「\(skill.displayName)」移入废纸篓")
+            showBanner(saveToWatchlist ? "已卸载「\(skill.displayName)」并转存至关注收藏" : "已将「\(skill.displayName)」移入废纸篓")
         } catch {
             showBanner("删除失败: \(error.localizedDescription)", isError: true)
         }
@@ -1467,7 +1467,7 @@ final class SkillStore: ObservableObject {
                 _ = try self.installDiscoveredSkillDirs([(skill.id, match.url)], categoryId: skill.categoryId, platforms: skill.activePlatforms, sourceRecord: updatedRecord)
                 DispatchQueue.main.async {
                     self.reloadSkills(autoIngest: false)
-                    self.showBanner("✅ 已更新「\(skill.displayName)」至 \(commitHash.map { String($0.prefix(7)) } ?? "latest")")
+                    self.showBanner("已更新「\(skill.displayName)」至 \(commitHash.map { String($0.prefix(7)) } ?? "latest")")
                 }
             } catch {
                 self.showBanner("写入更新失败: \(error.localizedDescription)", isError: true)
@@ -1486,7 +1486,7 @@ final class SkillStore: ObservableObject {
         }
         profiles.append(SkillProfile(id: "prof-" + String(UUID().uuidString.prefix(8)).lowercased(), name: trimmed, skillPlatforms: snapshot))
         saveRegistry()
-        showBanner("✅ 已保存场景预设「\(trimmed)」")
+        showBanner("已保存场景预设「\(trimmed)」")
     }
 
     func applyProfile(_ profile: SkillProfile) {
@@ -1504,7 +1504,7 @@ final class SkillStore: ObservableObject {
         }
         saveRegistry()
         reloadSkills(autoIngest: false)
-        showBanner("✅ 已切换至场景预设「\(profile.name)」（调整 \(applied) 项挂载）")
+        showBanner("已切换至场景预设「\(profile.name)」（调整 \(applied) 项挂载）")
     }
 
     func deleteProfile(id: String) {
@@ -1512,7 +1512,7 @@ final class SkillStore: ObservableObject {
         let name = profiles[idx].name
         profiles.remove(at: idx)
         saveRegistry()
-        showBanner("🗑 已删除场景预设「\(name)」")
+        showBanner("已删除场景预设「\(name)」")
     }
 
     // MARK: - Health Check + CLI Dependency Scanner
@@ -1607,7 +1607,7 @@ final class SkillStore: ObservableObject {
             case .shadowConflict, .missingMcpCommand: break
             }
             reloadSkills(autoIngest: false)
-            showBanner("✅ 已修复：\(issue.title)")
+            showBanner("已修复：\(issue.title)")
         } catch {
             showBanner("修复失败: \(error.localizedDescription)", isError: true)
         }
@@ -1629,7 +1629,7 @@ final class SkillStore: ObservableObject {
         }
         if needIngest { ingestExternalSkillsIntoVault() }
         reloadSkills(autoIngest: false)
-        showBanner("✅ 已自动修复 \(fixedCount) 项环境问题")
+        showBanner("已自动修复 \(fixedCount) 项环境问题")
     }
 
     // MARK: - Skill Categories & Vault Path
@@ -1638,40 +1638,112 @@ final class SkillStore: ObservableObject {
         registry.skillCategories[skillId] = categoryId
         saveRegistry()
         reloadSkills(autoIngest: false)
-        if let cat = categories.first(where: { $0.id == categoryId }) { showBanner("🏷️ 已归入「\(cat.name)」") }
+        if let cat = categories.first(where: { $0.id == categoryId }) { showBanner("已归入「\(cat.name)」") }
     }
 
     func addCategory(name: String) -> String? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
+        guard !trimmed.isEmpty, !categories.contains(where: { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }) else { return nil }
         let id = "cat-" + String(UUID().uuidString.prefix(8)).lowercased()
         categories.append(SkillCategory(id: id, name: trimmed, sortOrder: categories.count))
         saveRegistry()
         reloadSkills(autoIngest: false)
-        showBanner("✅ 已新增分类「\(trimmed)」")
+        showBanner("已新增分类「\(trimmed)」")
         return id
     }
 
+
     func renameCategory(id: String, newName: String) {
-        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        if let idx = categories.firstIndex(where: { $0.id == id }) {
-            categories[idx].name = trimmed
-            saveRegistry()
-            reloadSkills(autoIngest: false)
-            showBanner("✅ 分类已重命名为「\(trimmed)」")
+        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !categories.contains(where: { $0.id != id && $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
+            showBanner("分组名称为空或已存在", isError: true)
+            return
         }
+        guard let index = categories.firstIndex(where: { $0.id == id }) else { return }
+        categories[index].name = name
+        saveRegistry()
     }
 
-    func deleteCategory(id: String) -> Bool {
-        guard categories.count > 1 else { showBanner("至少需要保留 1 个分类", isError: true); return false }
-        guard let target = categories.first(where: { $0.id == id }), let fallback = categories.first(where: { $0.id != id }) else { return false }
+    @discardableResult
+    func deleteCategory(id: String, migrateTo targetCategoryId: String) -> Bool {
+        guard id != targetCategoryId, categories.contains(where: { $0.id == id }),
+              categories.contains(where: { $0.id == targetCategoryId }) else { return false }
+        registry.skillCategories = registry.skillCategories.mapValues { $0 == id ? targetCategoryId : $0 }
         categories.removeAll { $0.id == id }
-        for (k, v) in registry.skillCategories where v == id { registry.skillCategories[k] = fallback.id }
         saveRegistry()
         reloadSkills(autoIngest: false)
-        showBanner("🗑 已删除「\(target.name)」，原技能已归入「\(fallback.name)」")
+        showBanner("已迁移资产并删除分组")
         return true
+    }
+
+    func reorderCategories(fromId: String, toId: String) {
+        guard fromId != toId, let from = categories.firstIndex(where: { $0.id == fromId }),
+              let to = categories.firstIndex(where: { $0.id == toId }) else { return }
+        let moved = categories.remove(at: from)
+        categories.insert(moved, at: to)
+        saveRegistry()
+    }
+
+    func renameMcpCategory(id: String, newName: String) {
+        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !mcpCategories.contains(where: { $0.id != id && $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
+            showBanner("分组名称为空或已存在", isError: true)
+            return
+        }
+        guard let index = mcpCategories.firstIndex(where: { $0.id == id }) else { return }
+        mcpCategories[index].name = name
+        saveRegistry()
+    }
+
+    @discardableResult
+    func deleteMcpCategory(id: String, migrateTo targetCategoryId: String) -> Bool {
+        guard id != targetCategoryId, mcpCategories.contains(where: { $0.id == id }),
+              mcpCategories.contains(where: { $0.id == targetCategoryId }) else { return false }
+        registry.mcpCategoryMap = registry.mcpCategoryMap.mapValues { $0 == id ? targetCategoryId : $0 }
+        mcpCategories.removeAll { $0.id == id }
+        saveRegistry()
+        reloadMcpServers()
+        showBanner("已迁移资产并删除分组")
+        return true
+    }
+
+    func reorderMcpCategories(fromId: String, toId: String) {
+        guard fromId != toId, let from = mcpCategories.firstIndex(where: { $0.id == fromId }),
+              let to = mcpCategories.firstIndex(where: { $0.id == toId }) else { return }
+        let moved = mcpCategories.remove(at: from)
+        mcpCategories.insert(moved, at: to)
+        saveRegistry()
+    }
+
+    func renamePluginCategory(id: String, newName: String) {
+        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !pluginCategories.contains(where: { $0.id != id && $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
+            showBanner("分组名称为空或已存在", isError: true)
+            return
+        }
+        guard let index = pluginCategories.firstIndex(where: { $0.id == id }) else { return }
+        pluginCategories[index].name = name
+        saveRegistry()
+    }
+
+    @discardableResult
+    func deletePluginCategory(id: String, migrateTo targetCategoryId: String) -> Bool {
+        guard id != targetCategoryId, pluginCategories.contains(where: { $0.id == id }),
+              pluginCategories.contains(where: { $0.id == targetCategoryId }) else { return false }
+        registry.pluginCategoryMap = registry.pluginCategoryMap.mapValues { $0 == id ? targetCategoryId : $0 }
+        pluginCategories.removeAll { $0.id == id }
+        saveRegistry()
+        reloadPlugins()
+        showBanner("已迁移资产并删除分组")
+        return true
+    }
+
+    func reorderPluginCategories(fromId: String, toId: String) {
+        guard fromId != toId, let from = pluginCategories.firstIndex(where: { $0.id == fromId }),
+              let to = pluginCategories.firstIndex(where: { $0.id == toId }) else { return }
+        let moved = pluginCategories.remove(at: from)
+        pluginCategories.insert(moved, at: to)
+        saveRegistry()
     }
 
     func changeFixedVaultDirectory(to newPath: String) {
@@ -1711,7 +1783,7 @@ final class SkillStore: ObservableObject {
             reloadSkills()
             loadWatchlist()
             refreshWatchers()
-            showBanner("✅ 固定仓库已切换至 \(Self.shortenHomePath(normalized))")
+            showBanner("固定仓库已切换至 \(Self.shortenHomePath(normalized))")
         } catch {
             showBanner("切换目录失败: \(error.localizedDescription)", isError: true)
         }
@@ -1811,7 +1883,7 @@ final class SkillStore: ObservableObject {
         do {
             let names = try installDiscoveredSkillDirs(ctx.discovered, categoryId: ctx.categoryId, platforms: ctx.platforms, sourceRecord: ctx.sourceRecord)
             reloadSkills(autoIngest: false)
-            showBanner("✅ 已覆盖安装 \(names.count) 个 Skill: \(names.joined(separator: ", "))")
+            showBanner("已覆盖安装 \(names.count) 个 Skill: \(names.joined(separator: ", "))")
             ctx.onSuccess?()
         } catch {
             showBanner("覆盖安装失败: \(error.localizedDescription)", isError: true)
@@ -1836,7 +1908,7 @@ final class SkillStore: ObservableObject {
         do {
             let names = try installDiscoveredSkillDirs(targets, categoryId: categoryId, platforms: platforms, sourceRecord: nil)
             reloadSkills(autoIngest: false)
-            showBanner("✅ 已导入 \(names.joined(separator: ", ")) 到固定仓库")
+            showBanner("已导入 \(names.joined(separator: ", ")) 到固定仓库")
         } catch {
             showBanner("导入失败: \(error.localizedDescription)", isError: true)
         }
@@ -1882,7 +1954,7 @@ final class SkillStore: ObservableObject {
                 let installed = try self.installDiscoveredSkillDirs(discovered, categoryId: categoryId, platforms: platforms, sourceRecord: sourceRec)
                 DispatchQueue.main.async {
                     self.reloadSkills(autoIngest: false)
-                    self.showBanner("✅ 已从 GitHub 安装 \(installed.count) 个 Skill: \(installed.joined(separator: ", "))")
+                    self.showBanner("已从 GitHub 安装 \(installed.count) 个 Skill: \(installed.joined(separator: ", "))")
                     onSuccess?()
                 }
             } catch {

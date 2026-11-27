@@ -1,39 +1,47 @@
+import UniformTypeIdentifiers
 import AppKit
 import SwiftUI
 
 // MARK: - Observable UI State
 
 final class SkillHubUIState: ObservableObject {
-    @Published var activeTab: HubTab = .skills
+    @Published var lastMessage = "就绪"
+    @Published var selections: [HubTab: String] = [:]
+    @Published var editing: String? = nil
+    @Published var draft = ""
+    @Published var dropTarget: String? = nil
+    @Published var dragged: String? = nil
+    @Published var sourceMode = false
+    @Published var toml = false
+    @Published var destination = ""
+    @Published var activeTab: HubTab = .skills {
+        didSet {
+            guard activeTab != oldValue else { return }
+            editing = nil
+            dragged = nil
+            dropTarget = nil
+        }
+    }
     @Published var selectedCategoryId: String = "ALL"
     @Published var filterPlatform: AgentPlatform? = nil
     @Published var searchText: String = ""
-    @Published var expandedSkillIds: Set<String> = []
-    @Published var previewSkillMdIds: Set<String> = []
     @Published var hoveredCategoryId: String? = nil
 
     // MCP (Left = Purpose Group, Top = Platform Filter)
     @Published var mcpCategoryFilter: String = "ALL"
     @Published var mcpPlatformFilter: String = "ALL" // ALL, MULTI, antigravity, codex, claude
     @Published var mcpSearchText: String = ""
-    @Published var expandedMcpIds: Set<String> = []
-    @Published var showAddMcpCatBox: Bool = false
-    @Published var newMcpCatName: String = ""
 
     // Plugins (Left = Purpose Group, Top = Platform Filter)
     @Published var pluginCategoryFilter: String = "ALL"
     @Published var pluginPlatformFilter: AgentPlatform? = nil
     @Published var pluginSearchText: String = ""
-    @Published var expandedPluginIds: Set<String> = []
-    @Published var showAddPluginCatBox: Bool = false
-    @Published var newPluginCatName: String = ""
 
     // Watchlist (Plan A Independent Research Radar Space)
     @Published var watchlistStatusFilter: WatchlistStatus? = nil
     @Published var watchlistKindFilter: WatchlistKind? = nil
     @Published var watchlistOnlyUninstalled: Bool = false
     @Published var watchlistSearchText: String = ""
-    @Published var expandedWatchlistIds: Set<String> = []
 
     // Add Watchlist Draft
     @Published var showAddWatchlistModal: Bool = false
@@ -57,14 +65,9 @@ final class SkillHubUIState: ObservableObject {
         wlStarsCache = ""; wlLangCache = ""; wlPushedCache = ""
     }
 
-    // Left sidebar inline category create / rename (Skills)
-    @Published var showAddCategoryBox: Bool = false
-    @Published var newCategoryName: String = ""
-    @Published var editingCategoryId: String? = nil
-    @Published var editingCategoryName: String = ""
-
     // Modals
     @Published var pendingDeleteCategory: SkillCategory? = nil
+    @Published var archiveTrashedSkill = false
     @Published var pendingTrashSkill: SkillItemModel? = nil
     @Published var pendingUninstallPlugin: PluginItemModel? = nil
     @Published var showHealthModal: Bool = false
@@ -112,314 +115,32 @@ struct IOSToggleSwitch: View {
     }
 }
 
-// MARK: - Collapsible Skill Card View
-
-struct CollapsibleSkillCardView: View {
-    let skill: SkillItemModel
-    @ObservedObject var store: SkillStore
-    @ObservedObject var ui: SkillHubUIState
-    let palette: ThemePalette
-
-    private var isExpanded: Bool { ui.expandedSkillIds.contains(skill.id) }
-    private var isPreviewingMd: Bool { ui.previewSkillMdIds.contains(skill.id) }
-    private var isUpdating: Bool { store.updatingSkillIds.contains(skill.id) }
-    private var isMasterOn: Bool {
-        if skill.sourceKind == .plugin { return skill.activePlatforms.contains(.codex) || skill.activePlatforms.contains(.claude) }
-        return !skill.activePlatforms.isEmpty
-    }
-    private var categoryName: String { store.categories.first(where: { $0.id == skill.categoryId })?.name ?? "未分类" }
-
-    private func toggleExpand() {
-        if ui.expandedSkillIds.contains(skill.id) { ui.expandedSkillIds.remove(skill.id) }
-        else { ui.expandedSkillIds.insert(skill.id) }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                HStack(spacing: 10) {
-                    Circle().fill(skill.isAnyActive ? palette.okColor : palette.mutedText.opacity(0.5)).frame(width: 8.5, height: 8.5)
-                    VStack(alignment: .leading, spacing: 2.5) {
-                        HStack(spacing: 6) {
-                            Text(skill.displayName)
-                                .font(.system(size: 13.5, weight: .semibold))
-                                .foregroundColor(skill.isAnyActive ? palette.primaryText : palette.secondaryText)
-                                .lineLimit(1).truncationMode(.tail)
-                            if skill.sourceKind == .plugin {
-                                Text(skill.pluginName.map { "插件: \($0)" } ?? "插件")
-                                    .font(.system(size: 10, weight: .semibold)).padding(.horizontal, 6).padding(.vertical, 1.5)
-                                    .background(palette.accentBlue.opacity(0.15)).foregroundColor(palette.accentBlue).cornerRadius(4)
-                            } else if skill.sourceKind == .builtin {
-                                Text("系统内置").font(.system(size: 10, weight: .semibold)).padding(.horizontal, 6).padding(.vertical, 1.5)
-                                    .background(palette.chipBg).foregroundColor(palette.mutedText).cornerRadius(4)
-                            }
-                            if skill.estimatedTokens > 0 {
-                                Text(formatTokenBadge(skill.estimatedTokens))
-                                    .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                                    .padding(.horizontal, 5).padding(.vertical, 1.5)
-                                    .background(palette.chipBg).foregroundColor(palette.mutedText).cornerRadius(4)
-                                    .help("SKILL.md 约 \(skill.charCount) 字符，估算 \(skill.estimatedTokens) Tokens")
-                            }
-                        }
-                        Text(skill.summaryLine).font(.system(size: 11.5)).foregroundColor(palette.mutedText).lineLimit(1).truncationMode(.tail)
-                    }
-                    Spacer(minLength: 8)
-                }
-                .contentShape(Rectangle()).onTapGesture { toggleExpand() }
-
-                HStack(spacing: 4) {
-                    let activeList = AgentPlatform.allCases.filter { skill.activePlatforms.contains($0) }
-                    if activeList.isEmpty {
-                        Text("已停用").font(.system(size: 10.5, weight: .medium)).foregroundColor(palette.mutedText)
-                    } else {
-                        ForEach(activeList) { pf in
-                            Text(pf.shortLabel).font(.system(size: 10, weight: .semibold))
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(palette.chipBg).foregroundColor(palette.secondaryText).cornerRadius(4)
-                        }
-                    }
-                }
-
-                if skill.isManageable {
-                    IOSToggleSwitch(isOn: isMasterOn, palette: palette) { store.toggleMasterSwitch(for: skill) }
-                } else {
-                    Text("常驻").font(.system(size: 10.5, weight: .semibold)).padding(.horizontal, 8).padding(.vertical, 3)
-                        .background(palette.chipBg).foregroundColor(palette.mutedText).cornerRadius(10)
-                }
-
-                Button(action: toggleExpand) {
-                    HStack(spacing: 3) {
-                        Text(isExpanded ? "收起" : "详情").font(.system(size: 11, weight: .medium))
-                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down").font(.system(size: 9, weight: .semibold))
-                    }
-                    .padding(.horizontal, 8).padding(.vertical, 4.5).background(palette.inputBg)
-                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(palette.cardBorder, lineWidth: 1))
-                    .foregroundColor(palette.primaryText).cornerRadius(7)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 13).padding(.vertical, 10)
-
-            if isExpanded {
-                Divider().background(palette.divider)
-                VStack(alignment: .leading, spacing: 11) {
-                    Text(skill.descriptionText).font(.system(size: 12)).foregroundColor(palette.secondaryText)
-                        .lineSpacing(3).fixedSize(horizontal: false, vertical: true)
-
-                    if !skill.triggerHints.isEmpty {
-                        HStack(spacing: 6) {
-                            Text("触发词:").font(.system(size: 11, weight: .semibold)).foregroundColor(palette.mutedText)
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 5) {
-                                    ForEach(skill.triggerHints, id: \.self) { hint in
-                                        Text(hint).font(.system(size: 11, weight: .medium))
-                                            .padding(.horizontal, 7).padding(.vertical, 2.5)
-                                            .background(palette.accentBlue.opacity(0.14)).foregroundColor(palette.accentBlue).cornerRadius(5)
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if let src = skill.sourceRecord {
-                        HStack(spacing: 8) {
-                            Image(systemName: "arrow.triangle.branch").font(.system(size: 10.5)).foregroundColor(palette.mutedText)
-                            Text("来源: \(src.repoInput)\(src.commitHash.map { " (\($0.prefix(7)))" } ?? "")")
-                                .font(.system(size: 11, design: .monospaced)).foregroundColor(palette.mutedText)
-                                .lineLimit(1).truncationMode(.middle)
-                            Spacer()
-                            Button(action: { store.updateSkillFromGitHub(skill) }) {
-                                HStack(spacing: 4) {
-                                    if isUpdating { ProgressView().scaleEffect(0.5).frame(width: 11, height: 11) }
-                                    else { Image(systemName: "arrow.down.circle").font(.system(size: 11)) }
-                                    Text(isUpdating ? "更新中…" : "拉取更新").font(.system(size: 11, weight: .semibold))
-                                }
-                                .padding(.horizontal, 8).padding(.vertical, 4)
-                                .background(palette.accentBlue.opacity(0.15)).foregroundColor(palette.accentBlue).cornerRadius(6)
-                            }
-                            .buttonStyle(.plain).disabled(isUpdating)
-                        }
-                    }
-
-                    HStack(spacing: 8) {
-                        Text("适用范围:").font(.system(size: 11.5, weight: .semibold)).foregroundColor(palette.mutedText)
-                        ForEach(AgentPlatform.allCases) { platform in
-                            let isActive = skill.activePlatforms.contains(platform)
-                            let isLocked = skill.sourceKind == .builtin || (skill.sourceKind == .plugin && platform == .antigravity)
-                            if isLocked {
-                                HStack(spacing: 4) {
-                                    Image(systemName: isActive ? "checkmark" : "minus").font(.system(size: 9.5, weight: .bold))
-                                    Text(platform.fullName).font(.system(size: 11.5, weight: .semibold))
-                                }
-                                .padding(.horizontal, 10).padding(.vertical, 5)
-                                .background(isActive ? palette.accentBlue.opacity(0.18) : palette.chipBg)
-                                .foregroundColor(isActive ? palette.accentBlue : palette.mutedText).cornerRadius(7)
-                            } else {
-                                Button(action: { store.togglePlatform(platform, for: skill) }) {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: isActive ? "checkmark.circle.fill" : "circle").font(.system(size: 10.5, weight: .semibold))
-                                        Text(platform.fullName).font(.system(size: 11.5, weight: .semibold))
-                                    }
-                                    .padding(.horizontal, 10).padding(.vertical, 5)
-                                    .background(isActive ? palette.okColor.opacity(0.16) : palette.inputBg)
-                                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(isActive ? palette.okColor.opacity(0.55) : palette.cardBorder, lineWidth: 1))
-                                    .foregroundColor(isActive ? palette.okColor : palette.secondaryText).cornerRadius(7)
-                                }
-                                .buttonStyle(.plain).opacity(store.isPlatformInstalled(platform) || isActive ? 1.0 : 0.6)
-                            }
-                        }
-                        Spacer()
-                    }
-
-                    if isPreviewingMd {
-                        let mdText = (try? String(contentsOfFile: skill.skillMdPath, encoding: .utf8)) ?? "无法读取 SKILL.md"
-                        ScrollView {
-                            Text(mdText).font(.system(size: 11, design: .monospaced)).foregroundColor(palette.secondaryText)
-                                .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled).padding(10)
-                        }
-                        .frame(maxHeight: 200).background(palette.inputBg)
-                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(palette.cardBorder, lineWidth: 1)).cornerRadius(7)
-                    }
-
-                    HStack(spacing: 7) {
-                        Text("分类:").font(.system(size: 11.5, weight: .semibold)).foregroundColor(palette.mutedText)
-                        Menu {
-                            ForEach(store.categories) { cat in
-                                Button(action: { store.assignCategory(cat.id, to: skill.id) }) {
-                                    Text(cat.id == skill.categoryId ? "✓ \(cat.name)" : cat.name)
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 5) {
-                                Text(categoryName).font(.system(size: 11.5, weight: .medium)).foregroundColor(palette.primaryText)
-                                Image(systemName: "chevron.down").font(.system(size: 9)).foregroundColor(palette.mutedText)
-                            }
-                            .padding(.horizontal, 9).padding(.vertical, 4.5).background(palette.cardBg)
-                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(palette.cardBorder, lineWidth: 1)).cornerRadius(6)
-                        }
-                        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-
-                        Spacer()
-
-                        Button(action: {
-                            if isPreviewingMd { ui.previewSkillMdIds.remove(skill.id) }
-                            else { ui.previewSkillMdIds.insert(skill.id) }
-                        }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: isPreviewingMd ? "eye.slash" : "eye").font(.system(size: 11))
-                                Text(isPreviewingMd ? "收起预览" : "预览").font(.system(size: 11, weight: .medium))
-                            }
-                            .padding(.horizontal, 8).padding(.vertical, 4.5).background(palette.cardBg)
-                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(palette.cardBorder, lineWidth: 1))
-                            .foregroundColor(palette.primaryText).cornerRadius(6)
-                        }
-                        .buttonStyle(.plain)
-
-                        Button(action: { NSWorkspace.shared.open(URL(fileURLWithPath: skill.skillMdPath)) }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "doc.text").font(.system(size: 11))
-                                Text("SKILL.md").font(.system(size: 11, weight: .medium))
-                            }
-                            .padding(.horizontal, 8).padding(.vertical, 4.5).background(palette.cardBg)
-                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(palette.cardBorder, lineWidth: 1))
-                            .foregroundColor(palette.primaryText).cornerRadius(6)
-                        }
-                        .buttonStyle(.plain)
-
-                        Button(action: { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: skill.canonicalPath)]) }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "folder").font(.system(size: 11))
-                                Text("访达").font(.system(size: 11, weight: .medium))
-                            }
-                            .padding(.horizontal, 8).padding(.vertical, 4.5).background(palette.cardBg)
-                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(palette.cardBorder, lineWidth: 1))
-                            .foregroundColor(palette.primaryText).cornerRadius(6)
-                        }
-                        .buttonStyle(.plain)
-
-                        if skill.sourceKind == .userVault {
-                            Button(action: { ui.pendingTrashSkill = skill }) {
-                                Image(systemName: "trash").font(.system(size: 11))
-                                    .padding(.horizontal, 8).padding(.vertical, 5)
-                                    .background(palette.dangerColor.opacity(0.12))
-                                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(palette.dangerColor.opacity(0.35), lineWidth: 1))
-                                    .foregroundColor(palette.dangerColor).cornerRadius(6)
-                            }
-                            .buttonStyle(.plain).help("卸载或转存到关注列表")
-                        }
-                    }
-                    .padding(.top, 2)
-                }
-                .padding(14).background(palette.windowBg.opacity(0.45))
-            }
-        }
-        .background(palette.cardBg)
-        .overlay(RoundedRectangle(cornerRadius: 11).stroke(palette.cardBorder, lineWidth: 1))
-        .cornerRadius(11)
-        .opacity(skill.isAnyActive ? 1.0 : 0.78)
-    }
-}
-
-// MARK: - Main Desktop Window Root View (Plan A Topbar)
-
 struct SkillHubRootView: View {
     @ObservedObject var store: SkillStore
     @ObservedObject var ui: SkillHubUIState
 
     private var palette: ThemePalette { ThemePalette(isDark: store.isDarkTheme) }
-    private var visibleBaseSkills: [SkillItemModel] { store.skills.filter { store.showBuiltins || $0.sourceKind != .builtin } }
-    private var categoryScopedSkills: [SkillItemModel] {
-        ui.selectedCategoryId == "ALL" ? visibleBaseSkills : visibleBaseSkills.filter { $0.categoryId == ui.selectedCategoryId }
-    }
-    private var filteredSkills: [SkillItemModel] {
-        let q = ui.searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return categoryScopedSkills.filter { item in
-            if let pf = ui.filterPlatform, !item.activePlatforms.contains(pf) { return false }
-            if !q.isEmpty {
-                let hay = "\(item.id) \(item.displayName) \(item.summaryLine) \(item.descriptionText) \(item.triggerHints.joined(separator: " ")) \(item.pluginName ?? "")".lowercased()
-                if !hay.contains(q) { return false }
-            }
-            return true
-        }
-    }
-
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
                 // Top Bar (Plan A: Pure 3 Local Assets | Independent Watchlist Space Pill)
                 HStack(spacing: 8) {
                     HStack(spacing: 7) {
-                        Image(systemName: "square.grid.2x2.fill").font(.system(size: 14, weight: .semibold)).foregroundColor(palette.accentBlue)
+                        Image(systemName: "square.grid.2x2").font(.system(size: 14, weight: .semibold)).foregroundColor(palette.accentBlue)
                         Text("Apollo AgentHub").font(.system(size: 14.5, weight: .bold)).foregroundColor(palette.primaryText)
                     }
 
+                    Text("v2.0").padding(.horizontal, 4).padding(.vertical, 2).background(palette.surfaceBg).cornerRadius(3).font(.system(size: 10, design: .monospaced)).foregroundColor(palette.secondaryText)
                     // Pure 3-Tab Local Runtime Assets Segmented Control
                     HStack(spacing: 2) {
                         ForEach(HubTab.localAssetTabs) { tab in
                             let isSelected = ui.activeTab == tab
-                            let count: Int = {
-                                switch tab {
-                                case .skills: return visibleBaseSkills.count
-                                case .mcp: return store.mcpServers.count
-                                case .plugins: return store.plugins.count
-                                case .watchlist: return store.watchlist.count
-                                }
-                            }()
-                            Button(action: { ui.activeTab = tab }) {
-                                HStack(spacing: 5) {
-                                    Text(tab.title).font(.system(size: 11.5, weight: .semibold))
-                                    Text("\(count)")
-                                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                        .padding(.horizontal, 5).padding(.vertical, 1)
-                                        .background(isSelected ? Color.white.opacity(0.22) : palette.chipBg)
-                                        .cornerRadius(99)
-                                }
-                                .padding(.horizontal, 9).padding(.vertical, 5)
-                                .background(isSelected ? palette.accentBlue : Color.clear)
-                                .foregroundColor(isSelected ? .white : palette.secondaryText)
-                                .cornerRadius(6.5)
-                            }
-                            .buttonStyle(.plain)
+                            Button(tab.rawValue == "mcp" ? "MCP" : tab == .skills ? "Skills" : "Plugins") { ui.activeTab = tab }
+                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                .frame(width: 58, height: 24)
+                                .background(isSelected ? palette.surfaceBg : Color.clear)
+                                .cornerRadius(5)
+                                .buttonStyle(.plain)
                         }
                     }
                     .padding(3).background(palette.inputBg)
@@ -445,7 +166,7 @@ struct SkillHubRootView: View {
                         .padding(.horizontal, 10).padding(.vertical, 6)
                         .background(isWatchlist ? palette.amberBg : palette.inputBg)
                         .overlay(RoundedRectangle(cornerRadius: 8.5).stroke(isWatchlist ? palette.amberBorder : palette.cardBorder, lineWidth: 1))
-                        .foregroundColor(isWatchlist ? palette.amberAccent : palette.secondaryText)
+                        .foregroundColor(palette.amberAccent)
                         .cornerRadius(8.5)
                     }
                     .buttonStyle(.plain)
@@ -454,7 +175,7 @@ struct SkillHubRootView: View {
                     Spacer()
 
                     // Profile Preset Menu (visible in local modes)
-                    if ui.activeTab != .watchlist {
+                    Group {
                         Menu {
                             if store.profiles.isEmpty {
                                 Text("暂无预设，点击下方新建")
@@ -466,7 +187,7 @@ struct SkillHubRootView: View {
                         } label: {
                             HStack(spacing: 4) {
                                 Image(systemName: "slider.horizontal.3").font(.system(size: 11))
-                                Text("场景").font(.system(size: 11, weight: .semibold))
+                                Text("场景预设").font(.system(size: 11, weight: .semibold))
                             }
                             .padding(.horizontal, 9).padding(.vertical, 6).background(palette.cardBg)
                             .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.cardBorder, lineWidth: 1))
@@ -482,6 +203,7 @@ struct SkillHubRootView: View {
                                 .foregroundColor(store.healthIssues.isEmpty ? palette.okColor : palette.amberAccent)
                             Text("体检").font(.system(size: 11, weight: .semibold))
                             if !store.healthIssues.isEmpty {
+                                Circle().fill(palette.amberAccent).frame(width: 6, height: 6)
                                 Text("\(store.healthIssues.count)")
                                     .font(.system(size: 9.5, weight: .bold, design: .monospaced))
                                     .padding(.horizontal, 4.5).padding(.vertical, 1)
@@ -497,11 +219,11 @@ struct SkillHubRootView: View {
                     Button(action: {
                         store.reloadSkills(autoIngest: true)
                         store.loadWatchlist()
-                        store.showBanner("✅ 已刷新三端本地状态与关注收藏库")
+                        store.showBanner("已刷新三端本地状态与关注收藏库")
                     }) {
                         HStack(spacing: 4) {
                             Image(systemName: "arrow.clockwise").font(.system(size: 11, weight: .semibold))
-                            Text("刷新").font(.system(size: 11, weight: .semibold))
+
                         }
                         .padding(.horizontal, 9).padding(.vertical, 6).background(palette.cardBg)
                         .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.cardBorder, lineWidth: 1))
@@ -554,12 +276,13 @@ struct SkillHubRootView: View {
                     }
                     .buttonStyle(.plain)
                 }
-                .padding(.horizontal, 14).padding(.vertical, 10).background(palette.sidebarBg)
+                .padding(.leading, 78).padding(.trailing, 12).frame(height: 50).background(palette.sidebarBg)
 
                 Divider().background(palette.divider)
 
                 if let banner = store.statusBanner, !banner.isEmpty {
                     HStack(spacing: 8) {
+                        Image(systemName: store.statusIsError ? "exclamationmark.circle" : "checkmark.circle")
                         Text(banner).font(.system(size: 11.5, weight: .medium))
                             .foregroundColor(store.statusIsError ? palette.dangerColor : palette.okColor)
                         Spacer()
@@ -573,15 +296,16 @@ struct SkillHubRootView: View {
                     Divider().background(palette.divider)
                 }
 
-                // Workspace Body
-                switch ui.activeTab {
-                case .skills: skillsBodyView
-                case .mcp: McpHubBodyView(store: store, ui: ui, palette: palette)
-                case .plugins: PluginsHubBodyView(store: store, ui: ui, palette: palette)
-                case .watchlist: WatchlistHubBodyView(store: store, ui: ui, palette: palette)
-                }
+                Workbench(store: store, ui: ui, palette: palette)
+                Divider()
+                HStack(spacing: 7) {
+                    Circle().fill(palette.okColor).frame(width: 6, height: 6)
+                    Text("本地工作区")
+                    Spacer()
+                    Text(ui.lastMessage).lineLimit(1)
+                }.font(.system(size: 10, design: .monospaced)).foregroundColor(palette.secondaryText)
+                    .padding(.horizontal, 12).frame(height: 24).background(palette.sidebarBg)
             }
-
             // Modals
             if ui.showImportModal { ImportSkillModalView(store: store, ui: ui, palette: palette) }
             if ui.showInstallPluginModal { InstallPluginModalView(store: store, ui: ui, palette: palette) }
@@ -593,234 +317,42 @@ struct SkillHubRootView: View {
             if let sk = ui.pendingTrashSkill { TrashSkillConfirmModalView(skill: sk, store: store, ui: ui, palette: palette) }
             if let pl = ui.pendingUninstallPlugin { UninstallPluginConfirmModalView(plugin: pl, store: store, ui: ui, palette: palette) }
         }
-        .frame(minWidth: 920, minHeight: 600)
+        .foregroundColor(palette.primaryText)
+        .ignoresSafeArea(.container, edges: .top)
+        .preferredColorScheme(store.isDarkTheme ? .dark : .light)
+        .onReceive(store.$statusBanner.compactMap { $0 }) { ui.lastMessage = $0 }
     }
 
-    private var skillsBodyView: some View {
-        HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text("技能用途分类").font(.system(size: 11.5, weight: .bold)).foregroundColor(palette.mutedText)
-                    Spacer()
-                    Button("+ 新建") { ui.showAddCategoryBox.toggle() }
-                        .buttonStyle(.plain).font(.system(size: 11.5, weight: .semibold)).foregroundColor(palette.accentBlue)
-                }
-                .padding(.horizontal, 6)
-
-                if ui.showAddCategoryBox {
-                    HStack(spacing: 5) {
-                        TextField("如 🚀 自动化", text: $ui.newCategoryName)
-                            .textFieldStyle(.plain).font(.system(size: 11.5)).foregroundColor(palette.primaryText)
-                            .padding(.horizontal, 7).padding(.vertical, 5).background(palette.inputBg)
-                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(palette.cardBorder, lineWidth: 1)).cornerRadius(6)
-                        Button("添加") {
-                            if let newId = store.addCategory(name: ui.newCategoryName) {
-                                ui.newCategoryName = ""; ui.showAddCategoryBox = false; ui.selectedCategoryId = newId
-                            }
-                        }
-                        .buttonStyle(.plain).font(.system(size: 11, weight: .bold))
-                        .padding(.horizontal, 8).padding(.vertical, 5).background(palette.accentBlue).foregroundColor(.white).cornerRadius(6)
-                        .disabled(ui.newCategoryName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                }
-
-                ScrollView {
-                    VStack(spacing: 3) {
-                        let allActive = visibleBaseSkills.filter { $0.isAnyActive }.count
-                        let allSelected = ui.selectedCategoryId == "ALL"
-                        Button(action: { ui.selectedCategoryId = "ALL" }) {
-                            HStack {
-                                Text("📚 全部技能").font(.system(size: 12, weight: allSelected ? .bold : .medium)).lineLimit(1)
-                                Spacer()
-                                Text("\(allActive)/\(visibleBaseSkills.count)").font(.system(size: 10.5, weight: .semibold)).monospacedDigit().opacity(0.85)
-                            }
-                            .padding(.horizontal, 9).padding(.vertical, 7)
-                            .background(allSelected ? palette.accentBlue : Color.clear)
-                            .foregroundColor(allSelected ? .white : palette.primaryText).cornerRadius(8)
-                        }
-                        .buttonStyle(.plain)
-
-                        ForEach(store.categories) { cat in
-                            let inCat = visibleBaseSkills.filter { $0.categoryId == cat.id }
-                            let actCount = inCat.filter { $0.isAnyActive }.count
-                            let isSelected = ui.selectedCategoryId == cat.id
-                            let showActions = isSelected || ui.hoveredCategoryId == cat.id
-
-                            if ui.editingCategoryId == cat.id {
-                                HStack(spacing: 4) {
-                                    TextField("分类名称", text: $ui.editingCategoryName)
-                                        .textFieldStyle(.plain).font(.system(size: 11.5, weight: .semibold)).foregroundColor(palette.primaryText)
-                                        .padding(.horizontal, 6).padding(.vertical, 4).background(palette.inputBg)
-                                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(palette.accentBlue, lineWidth: 1)).cornerRadius(5)
-                                    Button("存") { store.renameCategory(id: cat.id, newName: ui.editingCategoryName); ui.editingCategoryId = nil }
-                                        .buttonStyle(.plain).font(.system(size: 10.5, weight: .bold))
-                                        .padding(.horizontal, 6).padding(.vertical, 4).background(palette.okColor).foregroundColor(.white).cornerRadius(5)
-                                    Button(action: { ui.editingCategoryId = nil }) {
-                                        Image(systemName: "xmark").font(.system(size: 9.5, weight: .bold)).foregroundColor(palette.mutedText)
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                                .padding(5).background(palette.cardBg).cornerRadius(7)
-                            } else {
-                                HStack(spacing: 4) {
-                                    Text(cat.name).font(.system(size: 12, weight: isSelected ? .bold : .medium)).lineLimit(1).truncationMode(.tail)
-                                    Spacer(minLength: 4)
-                                    if showActions {
-                                        Button(action: { ui.editingCategoryId = cat.id; ui.editingCategoryName = cat.name }) {
-                                            Image(systemName: "pencil").font(.system(size: 10, weight: .semibold)).padding(3)
-                                        }.buttonStyle(.plain)
-                                        if store.categories.count > 1 {
-                                            Button(action: { ui.pendingDeleteCategory = cat }) {
-                                                Image(systemName: "trash").font(.system(size: 10, weight: .semibold)).padding(3)
-                                            }.buttonStyle(.plain)
-                                        }
-                                    }
-                                    Text("\(actCount)/\(inCat.count)").font(.system(size: 10.5, weight: .semibold)).monospacedDigit().opacity(0.85)
-                                }
-                                .padding(.horizontal, 9).padding(.vertical, 7)
-                                .background(isSelected ? palette.accentBlue : (ui.hoveredCategoryId == cat.id ? palette.chipBg : Color.clear))
-                                .foregroundColor(isSelected ? .white : palette.primaryText).cornerRadius(8)
-                                .contentShape(Rectangle())
-                                .onTapGesture { ui.selectedCategoryId = cat.id }
-                                .onHover { h in if h { ui.hoveredCategoryId = cat.id } else if ui.hoveredCategoryId == cat.id { ui.hoveredCategoryId = nil } }
-                            }
-                        }
-                    }
-                }
-
-                Spacer(minLength: 4)
-                Divider().background(palette.divider)
-
-                HStack {
-                    Text("显示系统内置 Skill").font(.system(size: 11.5)).foregroundColor(palette.secondaryText)
-                    Spacer()
-                    IOSToggleSwitch(isOn: store.showBuiltins, palette: palette) { store.showBuiltins.toggle() }
-                }
-                .padding(.horizontal, 4)
-
-                HStack {
-                    Button(action: { NSWorkspace.shared.open(URL(fileURLWithPath: store.fixedVaultPath)) }) {
-                        Text(SkillStore.shortenHomePath(store.fixedVaultPath))
-                            .font(.system(size: 10.5, design: .monospaced)).foregroundColor(palette.mutedText)
-                            .lineLimit(1).truncationMode(.middle)
-                    }.buttonStyle(.plain)
-                    Spacer()
-                    Button("更改") {
-                        let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true
-                        if panel.runModal() == .OK, let url = panel.url { store.changeFixedVaultDirectory(to: url.path) }
-                    }.buttonStyle(.plain).font(.system(size: 10.5, weight: .semibold)).foregroundColor(palette.accentBlue)
-                }
-                .padding(.horizontal, 4)
-
-                Text("已启用 ≈ \(formatTokenBadge(store.activeEstimatedTokens(for: ui.filterPlatform)))")
-                    .font(.system(size: 10.5, design: .monospaced)).foregroundColor(palette.mutedText).padding(.horizontal, 4)
-            }
-            .padding(12).frame(width: 230).background(palette.sidebarBg)
-
-            Divider().background(palette.divider)
-
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 6) {
-                    HorizontalPlatformTab(title: "全部平台 (\(categoryScopedSkills.count))", selected: ui.filterPlatform == nil, palette: palette) { ui.filterPlatform = nil }
-                    ForEach(AgentPlatform.allCases) { pf in
-                        let cnt = categoryScopedSkills.filter { $0.activePlatforms.contains(pf) }.count
-                        HorizontalPlatformTab(title: "\(pf.fullName) (\(cnt))", selected: ui.filterPlatform == pf, palette: palette) {
-                            ui.filterPlatform = (ui.filterPlatform == pf) ? nil : pf
-                        }
-                    }
-                    Spacer()
-                    if ui.selectedCategoryId != "ALL", let selCat = store.categories.first(where: { $0.id == ui.selectedCategoryId }) {
-                        HStack(spacing: 5) {
-                            Text("本分类:").font(.system(size: 11)).foregroundColor(palette.mutedText)
-                            Button("全开") { store.setCategoryBatchEnabled(selCat.id, enabled: true) }
-                                .buttonStyle(.plain).font(.system(size: 11, weight: .bold)).padding(.horizontal, 8).padding(.vertical, 4)
-                                .background(palette.okColor.opacity(0.16)).foregroundColor(palette.okColor).cornerRadius(6)
-                            Button("全关") { store.setCategoryBatchEnabled(selCat.id, enabled: false) }
-                                .buttonStyle(.plain).font(.system(size: 11, weight: .bold)).padding(.horizontal, 8).padding(.vertical, 4)
-                                .background(palette.warnColor.opacity(0.16)).foregroundColor(palette.warnColor).cornerRadius(6)
-                        }
-                    }
-                }
-
-                HStack(spacing: 8) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundColor(palette.mutedText)
-                        TextField("搜索当前列表中的 Skill 名称、用途或触发词…", text: $ui.searchText)
-                            .textFieldStyle(.plain).font(.system(size: 12)).foregroundColor(palette.primaryText)
-                        if !ui.searchText.isEmpty {
-                            Button(action: { ui.searchText = "" }) {
-                                Image(systemName: "xmark.circle.fill").font(.system(size: 12)).foregroundColor(palette.mutedText)
-                            }.buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, 10).padding(.vertical, 7).background(palette.cardBg)
-                    .overlay(RoundedRectangle(cornerRadius: 9).stroke(palette.cardBorder, lineWidth: 1)).cornerRadius(9)
-
-                    Text("共 \(filteredSkills.count) 个").font(.system(size: 11.5, weight: .medium)).foregroundColor(palette.mutedText).monospacedDigit()
-                    Button("全部展开") { filteredSkills.forEach { ui.expandedSkillIds.insert($0.id) } }
-                        .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).padding(.horizontal, 8).padding(.vertical, 6)
-                        .background(palette.cardBg).overlay(RoundedRectangle(cornerRadius: 7).stroke(palette.cardBorder, lineWidth: 1))
-                        .foregroundColor(palette.secondaryText).cornerRadius(7)
-                    Button("全部折叠") { ui.expandedSkillIds.removeAll() }
-                        .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).padding(.horizontal, 8).padding(.vertical, 6)
-                        .background(palette.cardBg).overlay(RoundedRectangle(cornerRadius: 7).stroke(palette.cardBorder, lineWidth: 1))
-                        .foregroundColor(palette.secondaryText).cornerRadius(7)
-                }
-
-                ScrollView {
-                    LazyVStack(spacing: 8) {
-                        if filteredSkills.isEmpty {
-                            VStack(spacing: 8) {
-                                Image(systemName: "tray").font(.system(size: 28)).foregroundColor(palette.mutedText)
-                                Text("当前筛选条件下暂无匹配的 Skill").font(.system(size: 13)).foregroundColor(palette.secondaryText)
-                            }.frame(maxWidth: .infinity).padding(.vertical, 70)
-                        } else {
-                            ForEach(filteredSkills) { skill in CollapsibleSkillCardView(skill: skill, store: store, ui: ui, palette: palette) }
-                        }
-                    }
-                    .padding(.vertical, 2)
-                }
-            }
-            .padding(16).frame(maxWidth: .infinity, maxHeight: .infinity).background(palette.windowBg)
-        }
-    }
 }
 
-struct HorizontalPlatformTab: View {
-    let title: String
-    let selected: Bool
-    var useAmber: Bool = false
-    let palette: ThemePalette
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 11.5, weight: selected ? .bold : .medium))
-                .padding(.horizontal, 11).padding(.vertical, 5.5)
-                .background(selected ? (useAmber ? palette.amberAccent : palette.accentBlue) : palette.cardBg)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(selected ? (useAmber ? palette.amberAccent : palette.accentBlue) : palette.cardBorder, lineWidth: 1))
-                .foregroundColor(selected ? (useAmber ? palette.amberFg : .white) : palette.secondaryText)
-                .cornerRadius(8)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-// MARK: - MCP Services View (Unified IA: Left = Purpose Group, Top = Platform Filter)
-
-struct McpHubBodyView: View {
+private struct Workbench: View {
     @ObservedObject var store: SkillStore
     @ObservedObject var ui: SkillHubUIState
     let palette: ThemePalette
+    @FocusState private var editingFocused: Bool
+    private var visibleBaseSkills: [SkillItemModel] { store.skills.filter { store.showBuiltins || $0.sourceKind != .builtin } }
+    private var categoryScopedSkills: [SkillItemModel] {
+        ui.selectedCategoryId == "ALL" ? visibleBaseSkills : visibleBaseSkills.filter { $0.categoryId == ui.selectedCategoryId }
+    }
+    private var filteredSkills: [SkillItemModel] {
+        let q = ui.searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return categoryScopedSkills.filter { item in
+            if let pf = ui.filterPlatform, !item.activePlatforms.contains(pf) { return false }
+            if !q.isEmpty {
+                let hay = "\(item.id) \(item.displayName) \(item.summaryLine) \(item.descriptionText) \(item.triggerHints.joined(separator: " ")) \(item.pluginName ?? "")".lowercased()
+                if !hay.contains(q) { return false }
+            }
+            return true
+        }
+    }
 
-    private var categoryScoped: [McpServerItemModel] {
+    private var categoryScopedMcp: [McpServerItemModel] {
         ui.mcpCategoryFilter == "ALL" ? store.mcpServers : store.mcpServers.filter { $0.categoryId == ui.mcpCategoryFilter }
     }
 
     private var filteredServers: [McpServerItemModel] {
         let q = ui.mcpSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return categoryScoped.filter { srv in
+        return categoryScopedMcp.filter { srv in
             switch ui.mcpPlatformFilter {
             case "MULTI": if srv.platforms.count < 2 { return false }
             case "antigravity": if !srv.platforms.contains(.antigravity) { return false }
@@ -836,255 +368,13 @@ struct McpHubBodyView: View {
         }
     }
 
-    var body: some View {
-        HStack(spacing: 0) {
-            // Left Sidebar: MCP Purpose Groups
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("MCP 用途分组").font(.system(size: 11.5, weight: .bold)).foregroundColor(palette.mutedText)
-                    Spacer()
-                    Button("+ 新建") { ui.showAddMcpCatBox.toggle() }
-                        .buttonStyle(.plain).font(.system(size: 11.5, weight: .semibold)).foregroundColor(palette.accentBlue)
-                }
-                .padding(.horizontal, 6)
-
-                if ui.showAddMcpCatBox {
-                    HStack(spacing: 5) {
-                        TextField("如 🔍 检索工具", text: $ui.newMcpCatName)
-                            .textFieldStyle(.plain).font(.system(size: 11.5)).foregroundColor(palette.primaryText)
-                            .padding(.horizontal, 7).padding(.vertical, 5).background(palette.inputBg)
-                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(palette.cardBorder, lineWidth: 1)).cornerRadius(6)
-                        Button("添加") {
-                            if let nid = store.addMcpCategory(name: ui.newMcpCatName) {
-                                ui.newMcpCatName = ""; ui.showAddMcpCatBox = false; ui.mcpCategoryFilter = nid
-                            }
-                        }
-                        .buttonStyle(.plain).font(.system(size: 11, weight: .bold))
-                        .padding(.horizontal, 8).padding(.vertical, 5).background(palette.accentBlue).foregroundColor(.white).cornerRadius(6)
-                        .disabled(ui.newMcpCatName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                }
-
-                ScrollView {
-                    VStack(spacing: 3) {
-                        catRow(id: "ALL", title: "🔌 全部 MCP 服务", count: store.mcpServers.count)
-                        ForEach(store.mcpCategories) { cat in
-                            catRow(id: cat.id, title: cat.name, count: store.mcpServers.filter { $0.categoryId == cat.id }.count)
-                        }
-                    }
-                }
-
-                Spacer()
-                Divider().background(palette.divider)
-
-                Text("配置文件快捷打开").font(.system(size: 10.5, weight: .bold)).foregroundColor(palette.mutedText).padding(.horizontal, 4)
-                HStack(spacing: 5) {
-                    ForEach(AgentPlatform.allCases) { pf in
-                        let path = store.mcpConfigPath(for: pf)
-                        let exists = FileManager.default.fileExists(atPath: path)
-                        Button(action: {
-                            if exists { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
-                            else { store.showBanner("未检测到 \(pf.fullName) MCP 配置文件", isError: true) }
-                        }) {
-                            Text("\(pf.shortLabel) ↗")
-                                .font(.system(size: 10.5, weight: .semibold))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 5.5)
-                                .background(palette.inputBg)
-                                .overlay(RoundedRectangle(cornerRadius: 6).stroke(palette.cardBorder, lineWidth: 1))
-                                .foregroundColor(exists ? palette.primaryText : palette.mutedText)
-                                .cornerRadius(6)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-            .padding(12).frame(width: 230).frame(maxHeight: .infinity).background(palette.sidebarBg)
-
-            Divider().background(palette.divider)
-
-            // Right Pane: Platform Filter Topbar + Cards
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 6) {
-                    HorizontalPlatformTab(title: "全部平台 (\(categoryScoped.count))", selected: ui.mcpPlatformFilter == "ALL", palette: palette) { ui.mcpPlatformFilter = "ALL" }
-                    HorizontalPlatformTab(title: "多端共用 (\(categoryScoped.filter { $0.platforms.count >= 2 }.count))", selected: ui.mcpPlatformFilter == "MULTI", palette: palette) {
-                        ui.mcpPlatformFilter = ui.mcpPlatformFilter == "MULTI" ? "ALL" : "MULTI"
-                    }
-                    ForEach(AgentPlatform.allCases) { pf in
-                        let cnt = categoryScoped.filter { $0.platforms.contains(pf) }.count
-                        HorizontalPlatformTab(title: "\(pf.fullName) (\(cnt))", selected: ui.mcpPlatformFilter == pf.rawValue, palette: palette) {
-                            ui.mcpPlatformFilter = (ui.mcpPlatformFilter == pf.rawValue) ? "ALL" : pf.rawValue
-                        }
-                    }
-                    Spacer()
-                }
-
-                HStack(spacing: 8) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundColor(palette.mutedText)
-                        TextField("搜索 MCP 名称、命令或环境变量键…", text: $ui.mcpSearchText)
-                            .textFieldStyle(.plain).font(.system(size: 12)).foregroundColor(palette.primaryText)
-                    }
-                    .padding(.horizontal, 10).padding(.vertical, 7).background(palette.cardBg)
-                    .overlay(RoundedRectangle(cornerRadius: 9).stroke(palette.cardBorder, lineWidth: 1)).cornerRadius(9)
-                    Text("共 \(filteredServers.count) 个").font(.system(size: 11.5)).foregroundColor(palette.mutedText).monospacedDigit()
-                }
-
-                ScrollView {
-                    LazyVStack(spacing: 8) {
-                        if filteredServers.isEmpty {
-                            VStack(spacing: 8) {
-                                Image(systemName: "server.rack").font(.system(size: 28)).foregroundColor(palette.mutedText)
-                                Text("当前分组或平台下暂无 MCP 服务").font(.system(size: 13)).foregroundColor(palette.secondaryText)
-                            }.frame(maxWidth: .infinity).padding(.vertical, 70)
-                        } else {
-                            ForEach(filteredServers) { srv in CollapsibleMcpCardView(server: srv, store: store, ui: ui, palette: palette) }
-                        }
-                    }
-                    .padding(.vertical, 2)
-                }
-            }
-            .padding(16).frame(maxWidth: .infinity, maxHeight: .infinity).background(palette.windowBg)
-        }
-    }
-
-    private func catRow(id: String, title: String, count: Int) -> some View {
-        let selected = ui.mcpCategoryFilter == id
-        return Button(action: { ui.mcpCategoryFilter = id }) {
-            HStack {
-                Text(title).font(.system(size: 12, weight: selected ? .bold : .medium)).lineLimit(1).truncationMode(.tail)
-                Spacer()
-                Text("\(count)").font(.system(size: 10.5, weight: .semibold, design: .monospaced)).opacity(0.85)
-            }
-            .padding(.horizontal, 9).padding(.vertical, 7)
-            .background(selected ? palette.accentBlue : Color.clear)
-            .foregroundColor(selected ? .white : palette.primaryText).cornerRadius(8)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-struct CollapsibleMcpCardView: View {
-    let server: McpServerItemModel
-    @ObservedObject var store: SkillStore
-    @ObservedObject var ui: SkillHubUIState
-    let palette: ThemePalette
-
-    private var isExpanded: Bool { ui.expandedMcpIds.contains(server.id) }
-    private var catName: String { store.mcpCategories.first(where: { $0.id == server.categoryId })?.name ?? "其他服务" }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 7) {
-                        Text(server.id).font(.system(size: 13.5, weight: .bold, design: .monospaced)).foregroundColor(palette.primaryText)
-                        ForEach(AgentPlatform.allCases.filter { server.platforms.contains($0) }) { pf in
-                            Text(pf.fullName).font(.system(size: 10, weight: .semibold))
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(palette.accentBlue.opacity(0.14)).foregroundColor(palette.accentBlue).cornerRadius(5)
-                        }
-                    }
-                    Text(server.commandSummary).font(.system(size: 11.5, design: .monospaced))
-                        .foregroundColor(palette.mutedText).lineLimit(1).truncationMode(.middle)
-                }
-                Spacer()
-                Image(systemName: isExpanded ? "chevron.up" : "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundColor(palette.mutedText)
-            }
-            .padding(.horizontal, 14).padding(.vertical, 12).contentShape(Rectangle())
-            .onTapGesture { if isExpanded { ui.expandedMcpIds.remove(server.id) } else { ui.expandedMcpIds.insert(server.id) } }
-
-            if isExpanded {
-                Divider().background(palette.divider)
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(server.commandSummary)
-                        .font(.system(size: 11.5, design: .monospaced)).foregroundColor(palette.primaryText)
-                        .padding(9).frame(maxWidth: .infinity, alignment: .leading).background(palette.inputBg)
-                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(palette.cardBorder, lineWidth: 1)).cornerRadius(7)
-
-                    if !server.envKeys.isEmpty {
-                        Text("环境变量键（值已隐藏）: \(server.envKeys.joined(separator: ", "))")
-                            .font(.system(size: 11.5)).foregroundColor(palette.secondaryText)
-                    }
-
-                    HStack(spacing: 8) {
-                        Text("跨端同步:").font(.system(size: 11.5, weight: .semibold)).foregroundColor(palette.mutedText)
-                        ForEach(AgentPlatform.allCases) { pf in
-                            if server.platforms.contains(pf) {
-                                Button(action: { store.removeMcpServer(server, from: pf) }) {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "checkmark.circle.fill").font(.system(size: 10.5))
-                                        Text("\(pf.fullName)（点击移除）").font(.system(size: 11, weight: .semibold))
-                                    }
-                                    .padding(.horizontal, 9).padding(.vertical, 4.5).background(palette.okColor.opacity(0.15))
-                                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(palette.okColor.opacity(0.45), lineWidth: 1))
-                                    .foregroundColor(palette.okColor).cornerRadius(6)
-                                }.buttonStyle(.plain)
-                            } else {
-                                Button(action: { store.syncMcpServer(server, to: pf) }) {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 10))
-                                        Text("同步至 \(pf.fullName)").font(.system(size: 11, weight: .semibold))
-                                    }
-                                    .padding(.horizontal, 9).padding(.vertical, 4.5).background(palette.accentBlue.opacity(0.14))
-                                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(palette.accentBlue.opacity(0.4), lineWidth: 1))
-                                    .foregroundColor(palette.accentBlue).cornerRadius(6)
-                                }.buttonStyle(.plain)
-                            }
-                        }
-                        Spacer()
-                    }
-
-                    HStack(spacing: 8) {
-                        Text("用途分组:").font(.system(size: 11.5, weight: .semibold)).foregroundColor(palette.mutedText)
-                        Menu {
-                            ForEach(store.mcpCategories) { c in
-                                Button(c.id == server.categoryId ? "✓ \(c.name)" : c.name) { store.assignMcpCategory(c.id, to: server.id) }
-                            }
-                        } label: {
-                            HStack(spacing: 5) {
-                                Text(catName).font(.system(size: 11.5, weight: .medium)).foregroundColor(palette.primaryText)
-                                Image(systemName: "chevron.down").font(.system(size: 9)).foregroundColor(palette.mutedText)
-                            }
-                            .padding(.horizontal, 9).padding(.vertical, 4.5).background(palette.cardBg)
-                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(palette.cardBorder, lineWidth: 1)).cornerRadius(6)
-                        }
-                        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                        Spacer()
-                        ForEach(AgentPlatform.allCases.filter { server.configPaths[$0] != nil }) { pf in
-                            if let path = server.configPaths[pf] {
-                                Button(action: { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }) {
-                                    Text("打开 \(pf.shortLabel) 配置 ↗").font(.system(size: 11, weight: .medium))
-                                        .padding(.horizontal, 8).padding(.vertical, 4.5).background(palette.cardBg)
-                                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(palette.cardBorder, lineWidth: 1))
-                                        .foregroundColor(palette.primaryText).cornerRadius(6)
-                                }.buttonStyle(.plain)
-                            }
-                        }
-                    }
-                }
-                .padding(14).background(palette.windowBg.opacity(0.45))
-            }
-        }
-        .background(palette.cardBg)
-        .overlay(RoundedRectangle(cornerRadius: 11).stroke(palette.cardBorder, lineWidth: 1)).cornerRadius(11)
-    }
-}
-
-// MARK: - Plugins View (Unified IA: Left = Purpose Group, Top = Platform Filter)
-
-struct PluginsHubBodyView: View {
-    @ObservedObject var store: SkillStore
-    @ObservedObject var ui: SkillHubUIState
-    let palette: ThemePalette
-
-    private var categoryScoped: [PluginItemModel] {
+    private var categoryScopedPlugin: [PluginItemModel] {
         ui.pluginCategoryFilter == "ALL" ? store.plugins : store.plugins.filter { $0.categoryId == ui.pluginCategoryFilter }
     }
 
     private var filteredPlugins: [PluginItemModel] {
         let q = ui.pluginSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return categoryScoped.filter { p in
+        return categoryScopedPlugin.filter { p in
             if let pf = ui.pluginPlatformFilter, p.platform != pf { return false }
             if !q.isEmpty {
                 let hay = "\(p.rawId) \(p.displayName) \(p.descriptionText) \(p.authorName) \(p.bundledSkills.joined(separator: " "))".lowercased()
@@ -1093,230 +383,6 @@ struct PluginsHubBodyView: View {
             return true
         }
     }
-
-    var body: some View {
-        HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("插件用途分组").font(.system(size: 11.5, weight: .bold)).foregroundColor(palette.mutedText)
-                    Spacer()
-                    Button("+ 新建") { ui.showAddPluginCatBox.toggle() }
-                        .buttonStyle(.plain).font(.system(size: 11.5, weight: .semibold)).foregroundColor(palette.accentBlue)
-                }
-                .padding(.horizontal, 6)
-
-                if ui.showAddPluginCatBox {
-                    HStack(spacing: 5) {
-                        TextField("如 🎬 多媒体", text: $ui.newPluginCatName)
-                            .textFieldStyle(.plain).font(.system(size: 11.5)).foregroundColor(palette.primaryText)
-                            .padding(.horizontal, 7).padding(.vertical, 5).background(palette.inputBg)
-                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(palette.cardBorder, lineWidth: 1)).cornerRadius(6)
-                        Button("添加") {
-                            if let nid = store.addPluginCategory(name: ui.newPluginCatName) {
-                                ui.newPluginCatName = ""; ui.showAddPluginCatBox = false; ui.pluginCategoryFilter = nid
-                            }
-                        }
-                        .buttonStyle(.plain).font(.system(size: 11, weight: .bold))
-                        .padding(.horizontal, 8).padding(.vertical, 5).background(palette.accentBlue).foregroundColor(.white).cornerRadius(6)
-                        .disabled(ui.newPluginCatName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                }
-
-                ScrollView {
-                    VStack(spacing: 3) {
-                        catRow(id: "ALL", title: "🧩 全部插件", count: store.plugins.count)
-                        ForEach(store.pluginCategories) { cat in
-                            catRow(id: cat.id, title: cat.name, count: store.plugins.filter { $0.categoryId == cat.id }.count)
-                        }
-                    }
-                }
-
-                Spacer()
-                Divider().background(palette.divider)
-
-                Button(action: { NSWorkspace.shared.open(URL(fileURLWithPath: store.agyPluginsDir())) }) {
-                    HStack {
-                        Text("~/.gemini/config/plugins").font(.system(size: 10.5, design: .monospaced)).foregroundColor(palette.primaryText).lineLimit(1).truncationMode(.middle)
-                        Spacer()
-                        Text("↗").font(.system(size: 10.5)).foregroundColor(palette.accentBlue)
-                    }
-                    .padding(.horizontal, 9).padding(.vertical, 6).background(palette.inputBg)
-                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(palette.cardBorder, lineWidth: 1)).cornerRadius(7)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(12).frame(width: 230).frame(maxHeight: .infinity).background(palette.sidebarBg)
-
-            Divider().background(palette.divider)
-
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 6) {
-                    HorizontalPlatformTab(title: "全部平台 (\(categoryScoped.count))", selected: ui.pluginPlatformFilter == nil, palette: palette) { ui.pluginPlatformFilter = nil }
-                    ForEach(AgentPlatform.allCases) { pf in
-                        let cnt = categoryScoped.filter { $0.platform == pf }.count
-                        HorizontalPlatformTab(title: "\(pf.fullName) (\(cnt))", selected: ui.pluginPlatformFilter == pf, palette: palette) {
-                            ui.pluginPlatformFilter = (ui.pluginPlatformFilter == pf) ? nil : pf
-                        }
-                    }
-                    Spacer()
-                }
-
-                HStack(spacing: 8) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundColor(palette.mutedText)
-                        TextField("搜索插件名称、描述或内置 Skill…", text: $ui.pluginSearchText)
-                            .textFieldStyle(.plain).font(.system(size: 12)).foregroundColor(palette.primaryText)
-                    }
-                    .padding(.horizontal, 10).padding(.vertical, 7).background(palette.cardBg)
-                    .overlay(RoundedRectangle(cornerRadius: 9).stroke(palette.cardBorder, lineWidth: 1)).cornerRadius(9)
-                    Text("共 \(filteredPlugins.count) 个").font(.system(size: 11.5)).foregroundColor(palette.mutedText).monospacedDigit()
-                }
-
-                ScrollView {
-                    LazyVStack(spacing: 8) {
-                        if filteredPlugins.isEmpty {
-                            VStack(spacing: 8) {
-                                Image(systemName: "puzzlepiece.extension").font(.system(size: 28)).foregroundColor(palette.mutedText)
-                                Text("当前分组或平台下暂无插件").font(.system(size: 13)).foregroundColor(palette.secondaryText)
-                            }.frame(maxWidth: .infinity).padding(.vertical, 70)
-                        } else {
-                            ForEach(filteredPlugins) { plugin in CollapsiblePluginCardView(plugin: plugin, store: store, ui: ui, palette: palette) }
-                        }
-                    }
-                    .padding(.vertical, 2)
-                }
-            }
-            .padding(16).frame(maxWidth: .infinity, maxHeight: .infinity).background(palette.windowBg)
-        }
-    }
-
-    private func catRow(id: String, title: String, count: Int) -> some View {
-        let selected = ui.pluginCategoryFilter == id
-        return Button(action: { ui.pluginCategoryFilter = id }) {
-            HStack {
-                Text(title).font(.system(size: 12, weight: selected ? .bold : .medium)).lineLimit(1).truncationMode(.tail)
-                Spacer()
-                Text("\(count)").font(.system(size: 10.5, weight: .semibold, design: .monospaced)).opacity(0.85)
-            }
-            .padding(.horizontal, 9).padding(.vertical, 7)
-            .background(selected ? palette.accentBlue : Color.clear)
-            .foregroundColor(selected ? .white : palette.primaryText).cornerRadius(8)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-struct CollapsiblePluginCardView: View {
-    let plugin: PluginItemModel
-    @ObservedObject var store: SkillStore
-    @ObservedObject var ui: SkillHubUIState
-    let palette: ThemePalette
-
-    private var isExpanded: Bool { ui.expandedPluginIds.contains(plugin.id) }
-    private var catName: String { store.pluginCategories.first(where: { $0.id == plugin.categoryId })?.name ?? "其他插件" }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 7) {
-                        Text("🧩 \(plugin.displayName)").font(.system(size: 13.5, weight: .bold))
-                            .foregroundColor(plugin.isEnabled ? palette.primaryText : palette.secondaryText)
-                        Text(plugin.platform.shortLabel).font(.system(size: 10, weight: .bold))
-                            .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(palette.accentBlue.opacity(0.14)).foregroundColor(palette.accentBlue).cornerRadius(5)
-                        Text(plugin.version).font(.system(size: 10, weight: .semibold, design: .monospaced))
-                            .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(palette.purpleAccent.opacity(0.14)).foregroundColor(palette.purpleAccent).cornerRadius(5)
-                        if !plugin.bundledSkills.isEmpty {
-                            Text("\(plugin.bundledSkills.count) Skill").font(.system(size: 10, weight: .semibold))
-                                .padding(.horizontal, 6).padding(.vertical, 2).background(palette.chipBg).foregroundColor(palette.secondaryText).cornerRadius(5)
-                        }
-                    }
-                    Text(plugin.descriptionText).font(.system(size: 11.5)).foregroundColor(palette.mutedText).lineLimit(1)
-                }
-                Spacer()
-                if plugin.canToggle {
-                    IOSToggleSwitch(isOn: plugin.isEnabled, palette: palette) { store.togglePlugin(plugin) }
-                }
-                Image(systemName: isExpanded ? "chevron.up" : "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundColor(palette.mutedText)
-            }
-            .padding(.horizontal, 14).padding(.vertical, 12).contentShape(Rectangle())
-            .onTapGesture { if isExpanded { ui.expandedPluginIds.remove(plugin.id) } else { ui.expandedPluginIds.insert(plugin.id) } }
-
-            if isExpanded {
-                Divider().background(palette.divider)
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("插件 ID: \(plugin.rawId)  ·  来源: \(plugin.authorName)").font(.system(size: 11.5)).foregroundColor(palette.secondaryText)
-
-                    if !plugin.bundledSkills.isEmpty {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 6) {
-                                ForEach(plugin.bundledSkills, id: \.self) { sk in
-                                    Button(action: {
-                                        if plugin.platform == .antigravity {
-                                            ui.selectedCategoryId = "ALL"; ui.filterPlatform = nil; ui.searchText = sk
-                                            ui.expandedSkillIds.insert(sk); ui.activeTab = .skills
-                                        }
-                                    }) {
-                                        Text(plugin.platform == .antigravity ? "\(sk) →" : sk)
-                                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                            .padding(.horizontal, 8).padding(.vertical, 4)
-                                            .background(palette.accentBlue.opacity(0.14))
-                                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(palette.accentBlue.opacity(0.32), lineWidth: 1))
-                                            .foregroundColor(palette.accentBlue).cornerRadius(6)
-                                    }.buttonStyle(.plain)
-                                }
-                            }
-                        }
-                    }
-
-                    HStack(spacing: 8) {
-                        Text("用途分组:").font(.system(size: 11.5, weight: .semibold)).foregroundColor(palette.mutedText)
-                        Menu {
-                            ForEach(store.pluginCategories) { c in
-                                Button(c.id == plugin.categoryId ? "✓ \(c.name)" : c.name) { store.assignPluginCategory(c.id, to: plugin.id) }
-                            }
-                        } label: {
-                            HStack(spacing: 5) {
-                                Text(catName).font(.system(size: 11.5, weight: .medium)).foregroundColor(palette.primaryText)
-                                Image(systemName: "chevron.down").font(.system(size: 9)).foregroundColor(palette.mutedText)
-                            }
-                            .padding(.horizontal, 9).padding(.vertical, 4.5).background(palette.cardBg)
-                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(palette.cardBorder, lineWidth: 1)).cornerRadius(6)
-                        }
-                        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-
-                        Spacer()
-                        Button("打开目录") { NSWorkspace.shared.open(URL(fileURLWithPath: plugin.pluginPath)) }
-                            .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).padding(.horizontal, 9).padding(.vertical, 4.5)
-                            .background(palette.cardBg).overlay(RoundedRectangle(cornerRadius: 6).stroke(palette.cardBorder, lineWidth: 1))
-                            .foregroundColor(palette.primaryText).cornerRadius(6)
-
-                        if plugin.canUninstall {
-                            Button("卸载") { ui.pendingUninstallPlugin = plugin }
-                                .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).padding(.horizontal, 9).padding(.vertical, 4.5)
-                                .background(palette.dangerColor.opacity(0.12))
-                                .overlay(RoundedRectangle(cornerRadius: 6).stroke(palette.dangerColor.opacity(0.35), lineWidth: 1))
-                                .foregroundColor(palette.dangerColor).cornerRadius(6)
-                        }
-                    }
-                }
-                .padding(14).background(palette.windowBg.opacity(0.45))
-            }
-        }
-        .background(palette.cardBg)
-        .overlay(RoundedRectangle(cornerRadius: 11).stroke(palette.cardBorder, lineWidth: 1)).cornerRadius(11)
-        .opacity(plugin.isEnabled ? 1.0 : 0.72)
-    }
-}
-
-// MARK: - Independent Research Watchlist Space (Plan A)
-
-struct WatchlistHubBodyView: View {
-    @ObservedObject var store: SkillStore
-    @ObservedObject var ui: SkillHubUIState
-    let palette: ThemePalette
 
     private var statusScoped: [WatchlistItem] {
         guard let st = ui.watchlistStatusFilter else { return store.watchlist }
@@ -1336,312 +402,534 @@ struct WatchlistHubBodyView: View {
         }
     }
 
+    var tab: HubTab { ui.activeTab }
+    var research: Bool { tab == .watchlist }
+    var tint: Color { research ? palette.amberAccent : palette.accentBlue }
+    var groups: [SkillCategory] {
+        switch tab {
+        case .skills: return store.categories
+        case .mcp: return store.mcpCategories
+        case .plugins: return store.pluginCategories
+        case .watchlist: return []
+        }
+    }
+    var group: Binding<String> {
+        switch tab {
+        case .skills: return $ui.selectedCategoryId
+        case .mcp: return $ui.mcpCategoryFilter
+        case .plugins: return $ui.pluginCategoryFilter
+        case .watchlist: return .constant("ALL")
+        }
+    }
+    var query: Binding<String> {
+        switch tab {
+        case .skills: return $ui.searchText
+        case .mcp: return $ui.mcpSearchText
+        case .plugins: return $ui.pluginSearchText
+        case .watchlist: return $ui.watchlistSearchText
+        }
+    }
+    var ids: [String] {
+        switch tab {
+        case .skills: return filteredSkills.map(\.id)
+        case .mcp: return filteredServers.map(\.id)
+        case .plugins: return filteredPlugins.map(\.id)
+        case .watchlist: return filteredItems.map(\.id)
+        }
+    }
+    func count(_ id: String) -> Int {
+        switch tab {
+        case .skills: return visibleBaseSkills.filter { id == "ALL" || $0.categoryId == id }.count
+        case .mcp: return store.mcpServers.filter { id == "ALL" || $0.categoryId == id }.count
+        case .plugins: return store.plugins.filter { id == "ALL" || $0.categoryId == id }.count
+        case .watchlist: return store.watchlist.count
+        }
+    }
     var body: some View {
+        let visible = ids
+        let current = ui.selections[tab].flatMap { visible.contains($0) ? $0 : nil } ?? visible.first
         HStack(spacing: 0) {
-            // Left Sidebar: Research Status Grouping
-            VStack(alignment: .leading, spacing: 8) {
-                Text("研究状态分组").font(.system(size: 11.5, weight: .bold)).foregroundColor(palette.mutedText).padding(.horizontal, 6)
-
-                statusRow(nil, title: "全部关注", dotColor: palette.amberAccent, count: store.watchlist.count)
-                ForEach(WatchlistStatus.allCases) { st in
-                    statusRow(st, title: st.label, dotColor: st.tintColor(in: palette), count: store.watchlist.filter { $0.status == st }.count)
-                }
-
-                Spacer()
-                Divider().background(palette.divider)
-
-                Text("独立存储: .watchlist.json").font(.system(size: 10.5, design: .monospaced)).foregroundColor(palette.mutedText).padding(.horizontal, 4)
-                HStack(spacing: 6) {
-                    Button("导出 JSON") { store.exportWatchlistAsJSON() }
-                        .buttonStyle(.plain).font(.system(size: 10.5, weight: .semibold)).frame(maxWidth: .infinity).padding(.vertical, 5.5)
-                        .background(palette.inputBg).overlay(RoundedRectangle(cornerRadius: 6).stroke(palette.cardBorder, lineWidth: 1))
-                        .foregroundColor(palette.primaryText).cornerRadius(6)
-                    Button("导出 MD") { store.exportWatchlistAsMarkdown() }
-                        .buttonStyle(.plain).font(.system(size: 10.5, weight: .semibold)).frame(maxWidth: .infinity).padding(.vertical, 5.5)
-                        .background(palette.inputBg).overlay(RoundedRectangle(cornerRadius: 6).stroke(palette.cardBorder, lineWidth: 1))
-                        .foregroundColor(palette.primaryText).cornerRadius(6)
-                }
-            }
-            .padding(12).frame(width: 230).frame(maxHeight: .infinity).background(palette.sidebarBg)
-
-            Divider().background(palette.divider)
-
-            // Right Main Radar Workspace
-            VStack(alignment: .leading, spacing: 12) {
-                // Context Space Banner
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            Text("研究雷达 · 关注收藏空间").font(.system(size: 12.5, weight: .bold)).foregroundColor(palette.amberAccent)
-                            Text("（与本地已装运行态隔离）").font(.system(size: 11.5)).foregroundColor(palette.secondaryText)
-                        }
-                        Text("仅保存结构化元信息、GitHub 地址与研究笔记，不克隆代码到本地、不消耗 Agent 上下文；随时可一键转入本地安装。")
-                            .font(.system(size: 11)).foregroundColor(palette.mutedText)
-                    }
-                    Spacer()
-                }
-                .padding(.horizontal, 13).padding(.vertical, 10)
-                .background(palette.amberBg)
-                .overlay(RoundedRectangle(cornerRadius: 9).stroke(palette.amberBorder, lineWidth: 1))
-                .cornerRadius(9)
-
-                // Kind Filter Pills + Only Uninstalled Toggle
-                HStack(spacing: 6) {
-                    HorizontalPlatformTab(title: "全部类型 (\(statusScoped.count))", selected: ui.watchlistKindFilter == nil, useAmber: true, palette: palette) {
-                        ui.watchlistKindFilter = nil
-                    }
-                    ForEach(WatchlistKind.allCases) { k in
-                        let cnt = statusScoped.filter { $0.kind == k }.count
-                        HorizontalPlatformTab(title: "\(k.label) (\(cnt))", selected: ui.watchlistKindFilter == k, useAmber: true, palette: palette) {
-                            ui.watchlistKindFilter = (ui.watchlistKindFilter == k) ? nil : k
-                        }
-                    }
-                    Spacer()
-                    Button(action: { ui.watchlistOnlyUninstalled.toggle() }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: ui.watchlistOnlyUninstalled ? "checkmark.circle.fill" : "circle").font(.system(size: 10.5))
-                            Text("仅看本地未装").font(.system(size: 11, weight: .semibold))
-                        }
-                        .padding(.horizontal, 9).padding(.vertical, 5)
-                        .background(ui.watchlistOnlyUninstalled ? palette.okColor.opacity(0.16) : palette.cardBg)
-                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(ui.watchlistOnlyUninstalled ? palette.okColor : palette.cardBorder, lineWidth: 1))
-                        .foregroundColor(ui.watchlistOnlyUninstalled ? palette.okColor : palette.secondaryText).cornerRadius(7)
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                // Search Row
-                HStack(spacing: 8) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundColor(palette.mutedText)
-                        TextField("搜索关注项目名、GitHub 地址、标签或研究笔记…", text: $ui.watchlistSearchText)
-                            .textFieldStyle(.plain).font(.system(size: 12)).foregroundColor(palette.primaryText)
-                    }
-                    .padding(.horizontal, 10).padding(.vertical, 7).background(palette.cardBg)
-                    .overlay(RoundedRectangle(cornerRadius: 9).stroke(palette.cardBorder, lineWidth: 1)).cornerRadius(9)
-                    Text("共 \(filteredItems.count) 项").font(.system(size: 11.5)).foregroundColor(palette.mutedText).monospacedDigit()
-                }
-
+            sidebar.frame(width: 224)
+            Divider()
+            VStack(spacing: 0) {
+                summary
+                Divider()
+                filters(total: visible.count)
+                Divider()
                 ScrollView {
-                    LazyVStack(spacing: 8) {
-                        if filteredItems.isEmpty {
-                            VStack(spacing: 10) {
-                                Image(systemName: "star.circle").font(.system(size: 32)).foregroundColor(palette.amberAccent.opacity(0.8))
-                                Text(store.watchlist.isEmpty ? "还没有收录关注项目，点击右上角「+ 收录关注」开始建立你的研究雷达" : "当前筛选条件下暂无匹配条目")
-                                    .font(.system(size: 12.5)).foregroundColor(palette.secondaryText)
-                            }.frame(maxWidth: .infinity).padding(.vertical, 64)
-                        } else {
-                            ForEach(filteredItems) { item in
-                                CollapsibleWatchlistCardView(item: item, store: store, ui: ui, palette: palette)
-                            }
-                        }
+                    LazyVStack(spacing: 0) {
+                        rows(current)
+                        if visible.isEmpty { Text("暂无匹配的资产").foregroundColor(palette.mutedText).padding(28) }
                     }
-                    .padding(.vertical, 2)
                 }
-            }
-            .padding(16).frame(maxWidth: .infinity, maxHeight: .infinity).background(palette.windowBg)
-        }
+            }.frame(maxWidth: .infinity).background(palette.listBg)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("INSPECTOR").font(.system(size: 10, weight: .medium, design: .monospaced)).foregroundColor(palette.mutedText)
+                    details(current)
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(16)
+            }.frame(width: 332).background(palette.inspectorBg)
+        }.font(.system(size: 12))
     }
-
-    private func statusRow(_ st: WatchlistStatus?, title: String, dotColor: Color, count: Int) -> some View {
-        let selected = ui.watchlistStatusFilter == st
-        return Button(action: { ui.watchlistStatusFilter = st }) {
-            HStack(spacing: 7) {
-                Circle().fill(dotColor).frame(width: 7, height: 7)
-                Text(title).font(.system(size: 12, weight: selected ? .bold : .medium)).lineLimit(1)
+    var sidebar: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack {
+                Text(research ? "研究状态" : "用途分组").fontWeight(.semibold)
                 Spacer()
-                Text("\(count)").font(.system(size: 10.5, weight: .semibold, design: .monospaced)).opacity(0.85)
+                if !research { icon("plus", "新建分组") { startEdit("NEW", "") } }
             }
-            .padding(.horizontal, 9).padding(.vertical, 7)
-            .background(selected ? palette.amberBg : Color.clear)
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(selected ? palette.amberBorder : Color.clear, lineWidth: 1))
-            .foregroundColor(selected ? palette.amberAccent : palette.primaryText).cornerRadius(8)
-        }
-        .buttonStyle(.plain)
+            ScrollView {
+                VStack(spacing: 3) {
+                    if research {
+                        status(nil)
+                        ForEach(WatchlistStatus.allCases) { status($0) }
+                    } else {
+                        if ui.editing == "NEW" { editor }
+                        groupRow(nil)
+                        ForEach(groups) { cat in
+                            if ui.editing == cat.id { editor }
+                            else { groupRow(cat)
+                                .onDrag { ui.dragged = cat.id; return NSItemProvider(object: ("agenthub/" + tab.rawValue + "/" + cat.id) as NSString) }
+                                .onDrop(of: [UTType.plainText], isTargeted: Binding(get: { ui.dropTarget == cat.id }, set: { over in
+                                    if over && ui.dragged != nil { ui.dropTarget = cat.id } else if ui.dropTarget == cat.id { ui.dropTarget = nil }
+                                })) { providers in
+                                    defer { ui.dragged = nil; ui.dropTarget = nil }
+                                    guard let from = ui.dragged, let provider = providers.first else { return false }
+                                    let space = tab
+                                    _ = provider.loadObject(ofClass: NSString.self) { value, _ in
+                                        guard value as? String == "agenthub/" + space.rawValue + "/" + from else { return }
+                                        DispatchQueue.main.async {
+                                            switch space {
+                                            case .skills: store.reorderCategories(fromId: from, toId: cat.id)
+                                            case .mcp: store.reorderMcpCategories(fromId: from, toId: cat.id)
+                                            case .plugins: store.reorderPluginCategories(fromId: from, toId: cat.id)
+                                            case .watchlist: break
+                                            }
+                                        }
+                                    }
+                                    return true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if tab == .skills {
+                Divider()
+                Text("已启用估算  " + formatTokenBadge(store.activeEstimatedTokens())).font(.system(size: 11, design: .monospaced))
+                HStack { Text("显示内置技能"); Spacer(); Toggle("显示内置技能", isOn: $store.showBuiltins).labelsHidden().toggleStyle(.switch).controlSize(.mini) }
+                HStack {
+                    Button(SkillStore.shortenHomePath(store.fixedVaultPath)) { NSWorkspace.shared.open(URL(fileURLWithPath: store.fixedVaultPath)) }.lineLimit(1).truncationMode(.middle)
+                    Spacer()
+                    Button("更改") {
+                        let panel = NSOpenPanel()
+                        panel.canChooseDirectories = true
+                        panel.canChooseFiles = false
+                        panel.canCreateDirectories = true
+                        if panel.runModal() == .OK, let url = panel.url { store.changeFixedVaultDirectory(to: url.path) }
+                    }
+                }.buttonStyle(.plain).font(.system(size: 10, design: .monospaced))
+            } else if research {
+                Divider()
+                Label(".watchlist.json", systemImage: "doc.text").font(.caption.monospaced())
+                HStack { Button("导出 JSON", action: store.exportWatchlistAsJSON); Button("导出 MD", action: store.exportWatchlistAsMarkdown) }.controlSize(.small)
+            }
+        }.padding(12).background(palette.sidebarBg)
     }
-}
-
-struct CollapsibleWatchlistCardView: View {
-    let item: WatchlistItem
-    @ObservedObject var store: SkillStore
-    @ObservedObject var ui: SkillHubUIState
-    let palette: ThemePalette
-
-    private var isExpanded: Bool { ui.expandedWatchlistIds.contains(item.id) }
-    private var isFetching: Bool { store.fetchingWatchIds.contains(item.id) }
-    private var isInstalledLocally: Bool { store.isWatchlistItemInstalledLocally(item) }
-    private var currentDraftNote: String { ui.wlDraftNotes[item.id] ?? item.notes }
-    private var noteBinding: Binding<String> {
-        Binding(
-            get: { ui.wlDraftNotes[item.id] ?? item.notes },
-            set: { ui.wlDraftNotes[item.id] = $0 }
-        )
+    func startEdit(_ id: String, _ name: String) { ui.draft = name; ui.editing = id }
+    var editor: some View {
+        HStack {
+            TextField("分组名称", text: $ui.draft).focused($editingFocused).onSubmit { saveName() }.onAppear { editingFocused = true }
+            icon("xmark", "取消") { ui.editing = nil }
+        }.onExitCommand { ui.editing = nil }
     }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 11) {
-                Circle().fill(item.status.tintColor(in: palette)).frame(width: 8.5, height: 8.5)
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(item.name).font(.system(size: 13.5, weight: .semibold)).foregroundColor(palette.primaryText).lineLimit(1)
-                        Text(item.kind.label).font(.system(size: 10, weight: .bold))
-                            .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(palette.accentBlue.opacity(0.14)).foregroundColor(palette.accentBlue).cornerRadius(4)
-                        Text(item.status.label).font(.system(size: 10, weight: .semibold))
-                            .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(palette.chipBg).foregroundColor(item.status.tintColor(in: palette)).cornerRadius(4)
-                        if !item.starsText.isEmpty {
-                            Text("★ \(item.starsText)").font(.system(size: 10, weight: .semibold, design: .monospaced))
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(palette.chipBg).foregroundColor(palette.secondaryText).cornerRadius(4)
-                        }
-                        if isInstalledLocally {
-                            Text("本地已装").font(.system(size: 10, weight: .bold))
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(palette.okColor.opacity(0.16)).foregroundColor(palette.okColor).cornerRadius(4)
+    func saveName() {
+        guard let id = ui.editing else { return }
+        let name = ui.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !groups.contains(where: { $0.id != id && $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
+            store.showBanner("分组名称为空或已存在", isError: true); return
+        }
+        switch tab {
+        case .skills: if id == "NEW" { _ = store.addCategory(name: name) } else { store.renameCategory(id: id, newName: name) }
+        case .mcp: if id == "NEW" { _ = store.addMcpCategory(name: name) } else { store.renameMcpCategory(id: id, newName: name) }
+        case .plugins: if id == "NEW" { _ = store.addPluginCategory(name: name) } else { store.renamePluginCategory(id: id, newName: name) }
+        case .watchlist: break
+        }
+        ui.editing = nil
+    }
+    func icon(_ symbol: String, _ label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) { Image(systemName: symbol).frame(width: 18, height: 18) }.buttonStyle(.plain).help(label).accessibilityLabel(label)
+    }
+    func groupRow(_ cat: SkillCategory?) -> some View {
+        let id = cat?.id ?? "ALL"
+        let selected = group.wrappedValue == id
+        let draggedIndex = groups.firstIndex { $0.id == ui.dragged } ?? Int.max
+        let targetIndex = groups.firstIndex { $0.id == id } ?? 0
+        return HStack(spacing: 5) {
+            if cat == nil { Image(systemName: "square.grid.2x2").foregroundColor(palette.mutedText) }
+            else {
+                VStack(spacing: 1.5) {
+                    ForEach(0..<3) { _ in
+                        HStack(spacing: 1.5) {
+                            Circle().frame(width: 2, height: 2)
+                            Circle().frame(width: 2, height: 2)
                         }
                     }
-                    Text(item.summary).font(.system(size: 11.5)).foregroundColor(palette.mutedText).lineLimit(1)
-                }
-                Spacer()
-
-                if !item.repoUrl.isEmpty, let url = URL(string: item.repoUrl) {
-                    Button("GitHub ↗") { NSWorkspace.shared.open(url) }
-                        .buttonStyle(.plain).font(.system(size: 11, weight: .medium))
-                        .padding(.horizontal, 8).padding(.vertical, 4.5).background(palette.inputBg)
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(palette.cardBorder, lineWidth: 1))
-                        .foregroundColor(palette.primaryText).cornerRadius(6)
-                }
-
-                Image(systemName: isExpanded ? "chevron.up" : "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundColor(palette.mutedText)
+                }.frame(width: 12).foregroundColor(palette.mutedText)
             }
-            .padding(.horizontal, 14).padding(.vertical, 11).contentShape(Rectangle())
-            .onTapGesture {
-                if isExpanded { ui.expandedWatchlistIds.remove(item.id) }
-                else { ui.wlDraftNotes[item.id] = item.notes; ui.expandedWatchlistIds.insert(item.id) }
+            Text(cat?.name ?? "全部资产").lineLimit(1)
+            Spacer()
+            if let cat, selected || ui.hoveredCategoryId == id {
+                icon("pencil", "重命名") { startEdit(id, cat.name) }
+                if groups.count > 1 { icon("trash", "删除用途分组") { ui.pendingDeleteCategory = cat } }
+            } else { Text(String(count(id))).font(.caption.monospacedDigit()) }
+        }.padding(.horizontal, 7).frame(height: 31).background(selected ? palette.blueBg : Color.clear).cornerRadius(5)
+            .contentShape(Rectangle()).onTapGesture { group.wrappedValue = id }
+            .onHover { if $0 { ui.hoveredCategoryId = id } else if ui.hoveredCategoryId == id { ui.hoveredCategoryId = nil } }
+            .overlay(alignment: draggedIndex < targetIndex ? .bottom : .top) { if ui.dropTarget == id { Rectangle().fill(tint).frame(height: 2) } }
+    }
+    func status(_ st: WatchlistStatus?) -> some View {
+        HStack {
+            Image(systemName: st == nil ? "star" : "circle")
+            Text(st?.label ?? "全部关注"); Spacer()
+            Text(String(store.watchlist.filter { st == nil || $0.status == st }.count)).monospacedDigit()
+        }.padding(7).background(ui.watchlistStatusFilter == st ? palette.amberBg : Color.clear).cornerRadius(5)
+            .contentShape(Rectangle()).onTapGesture { ui.watchlistStatusFilter = st }
+    }
+    var summaryData: (String, String, Int, Int) {
+        switch tab {
+        case .skills: return ("SKILL ROUTING", "技能路由矩阵", visibleBaseSkills.filter(\.isAnyActive).count, visibleBaseSkills.reduce(0) { $0 + $1.activePlatforms.count })
+        case .mcp: return ("MCP SERVICES", "MCP 同步矩阵", store.mcpServers.filter { !$0.platforms.isEmpty }.count, store.mcpServers.reduce(0) { $0 + $1.platforms.count })
+        case .plugins: return ("PLUGIN REGISTRY", "插件管理", store.plugins.filter(\.isEnabled).count, store.plugins.reduce(0) { $0 + $1.bundledSkills.count })
+        case .watchlist: return ("RESEARCH RADAR", "研究雷达", store.watchlist.filter { $0.status == .studying }.count, store.watchlist.filter(store.isWatchlistItemInstalledLocally).count)
+        }
+    }
+    var summary: some View {
+        let data = summaryData
+        return HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(data.0).tracking(1).font(.system(size: 9, design: .monospaced)).foregroundColor(palette.mutedText)
+                Text(data.1).font(.system(size: 17, weight: .semibold))
             }
-
-            if isExpanded {
-                Divider().background(palette.divider)
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 8) {
-                        if !item.repoUrl.isEmpty {
-                            Text(item.repoUrl).font(.system(size: 11, design: .monospaced)).foregroundColor(palette.accentBlue).lineLimit(1).truncationMode(.middle)
+            Spacer()
+            HStack(spacing: 0) {
+                metric(research ? "关注" : "总数", count("ALL"))
+                Divider()
+                metric(research ? "研究中" : "启用", data.2).foregroundColor(research ? tint : palette.okColor)
+                Divider()
+                metric(research ? "本地已装" : tab == .plugins ? "内含" : "路由", data.3)
+            }.frame(height: 34).background(palette.surfaceBg).cornerRadius(6)
+        }.padding(.horizontal, 14).frame(height: 58)
+    }
+    func metric(_ label: String, _ value: Int) -> some View {
+        VStack(spacing: 0) { Text(label).font(.system(size: 9)).foregroundColor(palette.mutedText); Text(String(value)).font(.system(size: 13, weight: .semibold, design: .monospaced)) }.frame(minWidth: 44)
+    }
+    func pill(_ text: String, _ selected: Bool, _ action: @escaping () -> Void) -> some View {
+        Button(text, action: action).buttonStyle(.plain).font(.system(size: 10, weight: .medium)).padding(.horizontal, 6).padding(.vertical, 4)
+            .foregroundColor(selected ? tint : palette.secondaryText).background(selected ? tint.opacity(0.12) : Color.clear).cornerRadius(4)
+    }
+    func filters(total: Int) -> some View {
+        HStack(spacing: 4) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 1) {
+                    if research {
+                        pill("全部", ui.watchlistKindFilter == nil) { ui.watchlistKindFilter = nil }
+                        ForEach(WatchlistKind.allCases) { k in pill(k.label, ui.watchlistKindFilter == k) { ui.watchlistKindFilter = k } }
+                        pill("仅看未装", ui.watchlistOnlyUninstalled) { ui.watchlistOnlyUninstalled.toggle() }
+                    } else {
+                        let platform = tab == .skills ? $ui.filterPlatform : $ui.pluginPlatformFilter
+                        pill("全部", tab == .mcp ? ui.mcpPlatformFilter == "ALL" : platform.wrappedValue == nil) {
+                            if tab == .mcp { ui.mcpPlatformFilter = "ALL" } else { platform.wrappedValue = nil }
                         }
-                        if !item.language.isEmpty { Text("· \(item.language)").font(.system(size: 11)).foregroundColor(palette.mutedText) }
-                        if !item.pushedAt.isEmpty { Text("· 更新于 \(item.pushedAt)").font(.system(size: 11)).foregroundColor(palette.mutedText) }
-                        Spacer()
-                        ForEach(item.tags.prefix(4), id: \.self) { t in
-                            Text("#\(t)").font(.system(size: 10.5)).padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(palette.chipBg).foregroundColor(palette.secondaryText).cornerRadius(4)
+                        ForEach(AgentPlatform.allCases) { pf in
+                            pill(pf.shortLabel, tab == .mcp ? ui.mcpPlatformFilter == pf.rawValue : platform.wrappedValue == pf) {
+                                if tab == .mcp { ui.mcpPlatformFilter = pf.rawValue } else { platform.wrappedValue = pf }
+                            }
+                        }
+                        if tab == .mcp { pill("多端", ui.mcpPlatformFilter == "MULTI") { ui.mcpPlatformFilter = "MULTI" } }
+                        if tab == .skills && group.wrappedValue != "ALL" {
+                            Button("全开") { store.setCategoryBatchEnabled(group.wrappedValue, enabled: true) }
+                            Button("全关") { store.setCategoryBatchEnabled(group.wrappedValue, enabled: false) }
                         }
                     }
-
-                    if !item.installCmd.isEmpty {
-                        HStack {
-                            Text("$ \(item.installCmd)").font(.system(size: 11.5, design: .monospaced)).foregroundColor(palette.primaryText)
-                            Spacer()
-                            Button("复制命令") {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(item.installCmd, forType: .string)
-                                store.showBanner("✅ 已复制命令到剪贴板")
-                            }
-                            .buttonStyle(.plain).font(.system(size: 10.5, weight: .semibold))
-                            .padding(.horizontal, 8).padding(.vertical, 3.5).background(palette.chipBg).foregroundColor(palette.primaryText).cornerRadius(5)
-                        }
-                        .padding(.horizontal, 10).padding(.vertical, 6).background(palette.inputBg)
-                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(palette.cardBorder, lineWidth: 1)).cornerRadius(7)
-                    }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text("研究笔记").font(.system(size: 11, weight: .semibold)).foregroundColor(palette.mutedText)
-                            Spacer()
-                            if currentDraftNote != item.notes {
-                                Button("保存笔记") {
-                                    var updated = item; updated.notes = currentDraftNote
-                                    store.updateWatchlistItem(updated)
-                                    store.showBanner("✅ 已保存「\(item.name)」的研究笔记")
-                                }
-                                .buttonStyle(.plain).font(.system(size: 10.5, weight: .bold))
-                                .padding(.horizontal, 8).padding(.vertical, 3)
-                                .background(palette.amberAccent).foregroundColor(palette.amberFg).cornerRadius(5)
-                            }
-                        }
-                        TextEditor(text: noteBinding)
-                            .font(.system(size: 12))
-                            .frame(minHeight: 62, maxHeight: 110)
-                            .padding(5).background(palette.inputBg)
-                            .overlay(RoundedRectangle(cornerRadius: 7).stroke(palette.cardBorder, lineWidth: 1)).cornerRadius(7)
-                    }
-
-                    HStack(spacing: 8) {
-                        Text("研究状态:").font(.system(size: 11.5, weight: .semibold)).foregroundColor(palette.mutedText)
-                        Menu {
-                            ForEach(WatchlistStatus.allCases) { st in
-                                Button(st == item.status ? "✓ \(st.label)" : st.label) {
-                                    var updated = item; updated.status = st
-                                    store.updateWatchlistItem(updated)
-                                    store.showBanner("✅ 状态已切换为「\(st.label)」")
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 5) {
-                                Text(item.status.label).font(.system(size: 11.5, weight: .medium)).foregroundColor(palette.primaryText)
-                                Image(systemName: "chevron.down").font(.system(size: 9)).foregroundColor(palette.mutedText)
-                            }
-                            .padding(.horizontal, 9).padding(.vertical, 4.5).background(palette.cardBg)
-                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(palette.cardBorder, lineWidth: 1)).cornerRadius(6)
-                        }
-                        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-
-                        Spacer()
-
-                        if !item.repoUrl.isEmpty {
-                            Button(action: { store.refreshWatchlistItemMetadata(item) }) {
-                                HStack(spacing: 4) {
-                                    if isFetching { ProgressView().scaleEffect(0.5).frame(width: 11, height: 11) }
-                                    Text(isFetching ? "抓取中…" : "刷新元信息").font(.system(size: 11, weight: .medium))
-                                }
-                                .padding(.horizontal, 9).padding(.vertical, 4.5).background(palette.cardBg)
-                                .overlay(RoundedRectangle(cornerRadius: 6).stroke(palette.cardBorder, lineWidth: 1))
-                                .foregroundColor(palette.primaryText).cornerRadius(6)
-                            }
-                            .buttonStyle(.plain).disabled(isFetching)
-                        }
-
-                        if item.kind == .skill || item.kind == .plugin {
-                            Button(isInstalledLocally ? "在本地查看 →" : "转入本地安装 →") {
-                                if isInstalledLocally {
-                                    ui.searchText = item.name
-                                    ui.activeTab = item.kind == .plugin ? .plugins : .skills
-                                } else if item.kind == .skill {
-                                    ui.githubInput = item.repoUrl
-                                    ui.importEnableAgy = store.isPlatformInstalled(.antigravity)
-                                    ui.importEnableCodex = store.isPlatformInstalled(.codex)
-                                    ui.importEnableClaude = store.isPlatformInstalled(.claude)
-                                    ui.showImportModal = true
-                                } else {
-                                    ui.pluginGithubInput = item.repoUrl
-                                    ui.showInstallPluginModal = true
-                                }
-                            }
-                            .buttonStyle(.plain).font(.system(size: 11, weight: .bold))
-                            .padding(.horizontal, 9).padding(.vertical, 4.5)
-                            .background(palette.okColor.opacity(0.16)).foregroundColor(palette.okColor).cornerRadius(6)
-                        }
-
-                        Button("移除") { store.deleteWatchlistItem(id: item.id) }
-                            .buttonStyle(.plain).font(.system(size: 11, weight: .medium))
-                            .padding(.horizontal, 9).padding(.vertical, 4.5)
-                            .background(palette.dangerColor.opacity(0.12)).foregroundColor(palette.dangerColor).cornerRadius(6)
-                    }
+                }.controlSize(.mini)
+            }
+            HStack(spacing: 3) {
+                Image(systemName: "magnifyingglass")
+                TextField("搜索", text: query).textFieldStyle(.plain)
+                if !query.wrappedValue.isEmpty { icon("xmark", "清空搜索") { query.wrappedValue = "" } }
+            }.padding(5).frame(width: 112).background(palette.windowBg).cornerRadius(5)
+            Text("\(total) 项").fixedSize().font(.caption.monospacedDigit())
+        }.padding(.horizontal, 9).frame(height: 39)
+    }
+    func badge(_ title: String) -> some View {
+        Text(title).font(.system(size: 9, design: .monospaced)).lineLimit(1).padding(.horizontal, 4).padding(.vertical, 2)
+            .foregroundColor(palette.secondaryText).background(palette.surfaceBg).cornerRadius(3)
+    }
+    func row<Badges: View, Controls: View>(_ id: String, current: String?, active: Bool, name: String, subtitle: String,
+        @ViewBuilder badges: () -> Badges, @ViewBuilder controls: () -> Controls) -> some View {
+        HStack(spacing: 7) {
+            Circle().fill(active ? (research ? tint : palette.okColor) : palette.mutedText).frame(width: 6, height: 6)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 4) {
+                    Text(name).font(.system(size: 12, weight: .semibold, design: .monospaced)).lineLimit(1).layoutPriority(1)
+                    badges()
                 }
-                .padding(14).background(palette.windowBg.opacity(0.45))
+                Text(subtitle).font(.system(size: 10.5, design: tab == .mcp ? .monospaced : .default)).foregroundColor(palette.secondaryText).lineLimit(1)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            controls()
+        }.padding(.horizontal, 10).frame(height: 53).contentShape(Rectangle())
+            .background(current == id ? tint.opacity(0.075) : Color.clear)
+            .overlay(alignment: .leading) { if current == id { Rectangle().fill(tint).frame(width: 2) } }
+            .overlay(alignment: .bottom) { Rectangle().fill(palette.cardBorder).frame(height: 1) }
+            .onTapGesture { ui.selections[tab] = id }
+    }
+    func routes(_ active: Set<AgentPlatform>, highlightLocked: Bool = false, locked: @escaping (AgentPlatform) -> Bool, action: @escaping (AgentPlatform) -> Void) -> some View {
+        HStack(spacing: 3) {
+            ForEach(AgentPlatform.allCases) { pf in
+                let on = active.contains(pf)
+                Button { action(pf) } label: {
+                    HStack(spacing: 3) {
+                        Circle().frame(width: 4, height: 4)
+                        Text(pf.shortLabel).font(.system(size: 9, weight: .medium, design: .monospaced))
+                    }.padding(.horizontal, 4).frame(height: 20)
+                        .foregroundColor(locked(pf) && !highlightLocked ? palette.mutedText : on ? palette.okColor : palette.secondaryText)
+                        .background(on && (!locked(pf) || highlightLocked) ? palette.greenBg : palette.surfaceBg).cornerRadius(4)
+                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(on ? palette.greenBorder : palette.cardBorder))
+                }.buttonStyle(.plain).disabled(locked(pf)).help(pf.fullName + (locked(pf) ? (on ? " · 已连通" : " · 已锁定") : on ? " · 点击断开" : " · 点击连通"))
             }
         }
-        .background(palette.cardBg)
-        .overlay(RoundedRectangle(cornerRadius: 11).stroke(palette.cardBorder, lineWidth: 1)).cornerRadius(11)
+    }
+    func skillRoutes(_ sk: SkillItemModel) -> some View {
+        routes(sk.activePlatforms, locked: { !sk.isManageable || (sk.sourceKind == .plugin && $0 == .antigravity) }) { store.togglePlatform($0, for: sk) }
+    }
+    @ViewBuilder func rows(_ current: String?) -> some View {
+        switch tab {
+        case .skills:
+            ForEach(filteredSkills) { sk in
+                row(sk.id, current: current, active: sk.isAnyActive, name: sk.displayName, subtitle: sk.summaryLine) {
+                    if sk.sourceKind != .userVault { badge(sk.sourceKind.badgeTitle) }
+                    badge(formatTokenBadge(sk.estimatedTokens))
+                } controls: {
+                    skillRoutes(sk)
+                    let mutable = sk.sourceKind == .plugin ? sk.activePlatforms.subtracting([.antigravity]).count : sk.activePlatforms.count
+                    let all = mutable == (sk.sourceKind == .plugin ? 2 : 3)
+                    Button { store.toggleMasterSwitch(for: sk) } label: {
+                        ZStack(alignment: all ? .trailing : mutable > 0 ? .center : .leading) {
+                            Capsule().fill(mutable > 0 ? palette.okColor : palette.switchOffTrack).frame(width: 27, height: 15)
+                            Circle().fill(.white).frame(width: 11, height: 11).padding(2)
+                        }
+                    }.buttonStyle(.plain).disabled(!sk.isManageable).accessibilityLabel("技能总开关")
+                }
+            }
+        case .mcp:
+            ForEach(filteredServers) { srv in
+                row(srv.id, current: current, active: true, name: srv.id, subtitle: srv.commandSummary) {
+                    badge("\(srv.envKeys.count) ENV")
+                } controls: { routes(srv.platforms, highlightLocked: true, locked: { srv.platforms.contains($0) }) { store.syncMcpServer(srv, to: $0) } }
+            }
+        case .plugins:
+            ForEach(filteredPlugins) { pl in
+                row(pl.id, current: current, active: pl.isEnabled, name: pl.displayName, subtitle: pl.bundledSkills.isEmpty ? pl.descriptionText : pl.bundledSkills.joined(separator: " · ")) {
+                    badge(pl.platform.shortLabel); badge(pl.version)
+                } controls: { IOSToggleSwitch(isOn: pl.isEnabled, palette: palette) { store.togglePlugin(pl) }.disabled(!pl.canToggle) }
+            }
+        case .watchlist:
+            ForEach(filteredItems) { item in
+                row(item.id, current: current, active: true, name: item.name, subtitle: item.summary) {
+                    badge(item.kind.label)
+                    if !item.starsText.isEmpty { Label(item.starsText, systemImage: "star").font(.caption2) }
+                    if store.isWatchlistItemInstalledLocally(item) { badge("本地已装") }
+                } controls: {
+                    if let url = URL(string: item.repoUrl), !item.repoUrl.isEmpty { Link("GitHub ↗", destination: url).font(.caption) }
+                }
+            }
+        }
+    }
+    func sectionTitle(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Rectangle().fill(palette.cardBorder).frame(height: 1)
+            Text(text).font(.system(size: 11, weight: .semibold)).foregroundColor(palette.secondaryText)
+        }
+    }
+    func title(_ name: String, _ symbol: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Image(systemName: symbol).font(.system(size: 18)).foregroundColor(tint).frame(width: 36, height: 36).background(tint.opacity(0.12)).cornerRadius(8)
+            Text(tab == .skills ? "LOCAL SKILL" : tab == .mcp ? "MCP SERVER" : research ? "WATCHLIST" : "LOCAL PLUGIN").font(.system(size: 9, design: .monospaced)).foregroundColor(palette.mutedText)
+            Text(name).font(.system(size: 18, weight: .semibold, design: .monospaced)).textSelection(.enabled)
+        }
+    }
+    func categoryPicker(_ id: String, assign: @escaping (String) -> Void) -> some View {
+        Picker("所属用途分组", selection: Binding(get: { id }, set: assign)) { ForEach(groups) { Text($0.name).tag($0.id) } }
+    }
+    func topology(_ active: Set<AgentPlatform>) -> some View {
+        GeometryReader { geo in
+            let width = geo.size.width
+            ZStack(alignment: .topLeading) {
+                Canvas { context, _ in
+                    for (i, pf) in AgentPlatform.allCases.enumerated() {
+                        let end = CGPoint(x: width - 58, y: CGFloat(18 + i * 27))
+                        var path = Path()
+                        path.move(to: CGPoint(x: 70, y: 45))
+                        path.addCurve(to: end, control1: CGPoint(x: width * 0.54, y: 45), control2: CGPoint(x: width * 0.54, y: end.y))
+                        context.stroke(path, with: .color(active.contains(pf) ? palette.okColor : palette.mutedText), style: StrokeStyle(lineWidth: 1.5, dash: active.contains(pf) ? [] : [4, 4]))
+                    }
+                }
+                badge("LOCAL HUB").position(x: 45, y: 45)
+                ForEach(Array(AgentPlatform.allCases.enumerated()), id: \.offset) { i, pf in
+                    badge(pf.shortLabel).position(x: width - 38, y: CGFloat(18 + i * 27))
+                }
+            }
+        }.frame(height: 90).background(palette.windowBg).cornerRadius(7)
+    }
+    @ViewBuilder func details(_ id: String?) -> some View {
+        if let id {
+            switch tab {
+            case .skills: if let sk = store.skills.first(where: { $0.id == id }) { skillDetail(sk) }
+            case .mcp: if let srv = store.mcpServers.first(where: { $0.id == id }) { mcpDetail(srv) }
+            case .plugins: if let pl = store.plugins.first(where: { $0.id == id }) { pluginDetail(pl) }
+            case .watchlist: if let item = store.watchlist.first(where: { $0.id == id }) { watchDetail(item) }
+            }
+        } else { Text("选择资产以查看详情").foregroundColor(palette.mutedText) }
+    }
+    @ViewBuilder func skillDetail(_ sk: SkillItemModel) -> some View {
+        title(sk.displayName, "square.3.layers.3d")
+        sectionTitle("挂载矩阵")
+        topology(sk.activePlatforms)
+        skillRoutes(sk)
+        Picker("详情", selection: $ui.sourceMode) { Text("概览").tag(false); Text("SKILL.md 源码").tag(true) }.labelsHidden().pickerStyle(.segmented)
+        if ui.sourceMode {
+            code((try? String(contentsOfFile: sk.skillMdPath, encoding: .utf8)) ?? "无法读取 SKILL.md")
+            Button("打开 SKILL.md") { openPath(sk.skillMdPath) }
+        } else {
+            sectionTitle("描述")
+            Text(sk.descriptionText).textSelection(.enabled)
+            if !sk.triggerHints.isEmpty { Text("触发词 · " + sk.triggerHints.joined(separator: "、")).foregroundColor(palette.secondaryText) }
+            if let src = sk.sourceRecord {
+                sectionTitle("来源仓库"); code(src.repoInput + "\n" + (src.commitHash ?? ""))
+                Button("拉取更新") { store.updateSkillFromGitHub(sk) }.disabled(store.updatingSkillIds.contains(sk.id))
+            }
+            categoryPicker(sk.categoryId) { store.assignCategory($0, to: sk.id) }
+            Button("打开目录") { openPath(sk.canonicalPath) }
+            if sk.sourceKind == .userVault {
+                HStack {
+                    Button("卸载并转存关注") { ui.archiveTrashedSkill = true; ui.pendingTrashSkill = sk }
+                    Button("移入废纸篓") { ui.archiveTrashedSkill = false; ui.pendingTrashSkill = sk }
+                        .foregroundColor(palette.dangerColor)
+                }
+            }
+        }
+    }
+    func openPath(_ path: String) { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
+    func code(_ text: String) -> some View {
+        Text(verbatim: text).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading).padding(9).background(palette.windowBg).cornerRadius(5)
+    }
+    @ViewBuilder func mcpDetail(_ srv: McpServerItemModel) -> some View {
+        title(srv.id, "point.3.connected.trianglepath.dotted")
+        sectionTitle("跨端同步")
+        topology(srv.platforms)
+        routes(srv.platforms, locked: { _ in false }) { pf in
+            if srv.platforms.contains(pf) { store.removeMcpServer(srv, from: pf) } else { store.syncMcpServer(srv, to: pf) }
+        }
+        Text("启动命令"); code(srv.commandSummary)
+        if !srv.envKeys.isEmpty { Text("环境变量 · " + srv.envKeys.joined(separator: ", ")) }
+        Picker("配置预览", selection: $ui.toml) { Text("JSON").tag(false); Text("TOML").tag(true) }.labelsHidden().pickerStyle(.segmented)
+        code(configPreview(srv))
+        Button("同步至全部平台") { for pf in AgentPlatform.allCases where !srv.platforms.contains(pf) { store.syncMcpServer(srv, to: pf) } }.disabled(srv.platforms.count == 3)
+        categoryPicker(srv.categoryId) { store.assignMcpCategory($0, to: srv.id) }
+        ForEach(AgentPlatform.allCases) { pf in
+            if let path = srv.configPaths[pf] { Button("打开 " + pf.shortLabel + " 配置") { openPath(path) } }
+        }
+    }
+    func configPreview(_ srv: McpServerItemModel) -> String {
+        let order: [AgentPlatform] = ui.toml ? [.codex, .antigravity, .claude] : [.antigravity, .claude, .codex]
+        guard let cfg = order.compactMap({ srv.rawConfigs[$0] }).first else { return "无法读取配置" }
+        if ui.toml {
+            let table = "mcp_servers." + CodexTomlHelper.quoteKeyIfNeeded(srv.id)
+            func quote(_ value: String) -> String { "\"" + CodexTomlHelper.escapeTomlString(value) + "\"" }
+            var lines = ["[" + table + "]"]
+            if let cmd = cfg.command { lines.append("command = " + quote(cmd)); lines.append("args = [" + cfg.args.map(quote).joined(separator: ", ") + "]") }
+            if let url = cfg.url { lines.append("url = " + quote(url)) }
+            if !cfg.env.isEmpty { lines.append("[" + table + ".env]"); lines += cfg.env.keys.sorted().map { CodexTomlHelper.quoteKeyIfNeeded($0) + " = \"••••\"" } }
+            return lines.joined(separator: "\n")
+        }
+        var object: [String: Any] = [:]
+        if let cmd = cfg.command { object["command"] = cmd; object["args"] = cfg.args }
+        if let url = cfg.url { object["url"] = url }
+        if !cfg.env.isEmpty { object["env"] = cfg.env.mapValues { _ in "••••" } }
+        guard let data = try? JSONSerialization.data(withJSONObject: ["mcpServers": [srv.id: object]], options: [.prettyPrinted, .sortedKeys]) else { return "无法生成配置预览" }
+        return String(decoding: data, as: UTF8.self)
+    }
+    @ViewBuilder func pluginDetail(_ pl: PluginItemModel) -> some View {
+        title(pl.displayName, "puzzlepiece.extension")
+        Text([pl.platform.fullName, pl.version, pl.authorName].filter { !$0.isEmpty }.joined(separator: " · "))
+        Text(pl.descriptionText)
+        sectionTitle("安装路径")
+        code(SkillStore.shortenHomePath(pl.pluginPath))
+        Button("打开目录") { openPath(pl.pluginPath) }
+        if !pl.bundledSkills.isEmpty { sectionTitle("内含 Skills") }
+        ForEach(pl.bundledSkills, id: \.self) { name in
+            Button {
+                if let sk = store.skills.first(where: { $0.id == name && $0.canonicalPath == (pl.pluginPath as NSString).appendingPathComponent("skills/" + name) }) {
+                    ui.selectedCategoryId = "ALL"; ui.filterPlatform = nil; ui.searchText = ""; ui.selections[.skills] = sk.id; ui.activeTab = .skills
+                } else { openPath((pl.pluginPath as NSString).appendingPathComponent("skills/" + name)) }
+            } label: { Label(name, systemImage: "arrow.up.right") }
+        }
+        categoryPicker(pl.categoryId) { store.assignPluginCategory($0, to: pl.id) }
+        HStack {
+            Button(pl.isEnabled ? "停用插件" : "启用插件") { store.togglePlugin(pl) }.disabled(!pl.canToggle)
+            if pl.canUninstall { Button("卸载…") { ui.pendingUninstallPlugin = pl } }
+        }
+    }
+    @ViewBuilder func watchDetail(_ item: WatchlistItem) -> some View {
+        title(item.name, "star")
+        sectionTitle("GitHub 元信息")
+        Text(item.summary)
+        Text([item.starsText.isEmpty ? "" : "Stars " + item.starsText, item.language, item.pushedAt].filter { !$0.isEmpty }.joined(separator: " · ")).foregroundColor(palette.secondaryText)
+        if !item.tags.isEmpty { Text(item.tags.map { "#" + $0 }.joined(separator: "  ")) }
+        if let url = URL(string: item.repoUrl), !item.repoUrl.isEmpty { Link(item.repoUrl, destination: url) }
+        if !item.installCmd.isEmpty {
+            sectionTitle("CLI 安装命令")
+            code(item.installCmd)
+            Button("复制安装命令") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(item.installCmd, forType: .string); store.showBanner("已复制安装命令") }
+        }
+        Picker("研究状态", selection: Binding(get: { item.status }, set: { var updated = item; updated.status = $0; store.updateWatchlistItem(updated) })) {
+            ForEach(WatchlistStatus.allCases) { Text($0.label).tag($0) }
+        }
+        HStack {
+            Text("研究笔记"); Spacer()
+            Button("保存笔记") {
+                guard let note = ui.wlDraftNotes.removeValue(forKey: item.id) else { return }
+                var updated = item; updated.notes = note; store.updateWatchlistItem(updated); store.showBanner("已保存研究笔记")
+            }.disabled((ui.wlDraftNotes[item.id] ?? item.notes) == item.notes)
+        }
+        TextEditor(text: Binding(get: { ui.wlDraftNotes[item.id] ?? item.notes }, set: { ui.wlDraftNotes[item.id] = $0 }))
+            .frame(minHeight: 90).overlay(RoundedRectangle(cornerRadius: 4).stroke(palette.strongBorder))
+        Button("刷新元信息") { store.refreshWatchlistItemMetadata(item) }.disabled(store.fetchingWatchIds.contains(item.id) || item.repoUrl.isEmpty)
+        if item.kind == .skill || item.kind == .plugin {
+            Button(store.isWatchlistItemInstalledLocally(item) ? "在本地查看" : "转入本地安装") { installOrSelect(item) }
+        }
+        Button("移除关注") { store.deleteWatchlistItem(id: item.id) }
+    }
+    func installOrSelect(_ item: WatchlistItem) {
+        if store.isWatchlistItemInstalledLocally(item) {
+            if let pl = store.plugins.first(where: { $0.rawId.caseInsensitiveCompare(item.name) == .orderedSame || $0.displayName.caseInsensitiveCompare(item.name) == .orderedSame }) {
+                ui.pluginSearchText = ""; ui.pluginPlatformFilter = nil; ui.pluginCategoryFilter = "ALL"; ui.selections[.plugins] = pl.id; ui.activeTab = .plugins
+            } else {
+                let sk = store.skills.first { $0.id.caseInsensitiveCompare(item.name) == .orderedSame || $0.displayName.caseInsensitiveCompare(item.name) == .orderedSame || $0.sourceRecord?.cloneURL.localizedCaseInsensitiveContains(item.name) == true || $0.sourceRecord?.repoInput.caseInsensitiveCompare(item.repoUrl) == .orderedSame }
+                ui.searchText = ""; ui.selectedCategoryId = "ALL"; ui.filterPlatform = nil
+                if sk?.sourceKind == .builtin { store.showBuiltins = true }
+                ui.selections[.skills] = sk?.id; ui.activeTab = .skills
+            }
+        } else if item.kind == .plugin { ui.pluginGithubInput = item.repoUrl; ui.showInstallPluginModal = true }
+        else {
+            ui.githubInput = item.repoUrl
+            ui.importEnableAgy = store.isPlatformInstalled(.antigravity)
+            ui.importEnableCodex = store.isPlatformInstalled(.codex)
+            ui.importEnableClaude = store.isPlatformInstalled(.claude)
+            ui.showImportModal = true
+        }
     }
 }

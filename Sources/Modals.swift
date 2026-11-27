@@ -64,7 +64,7 @@ struct AddWatchlistModalView: View {
                                         ui.wlStarsCache = meta.stars
                                         ui.wlLangCache = meta.language
                                         ui.wlPushedCache = meta.pushedAt
-                                        store.showBanner("✅ 已抓取「\(meta.name)」元信息（★ \(meta.stars) · 零本地下载）")
+                                        store.showBanner("已抓取「\(meta.name)」元信息（Stars \(meta.stars) · 零本地下载）")
                                     case .failure(let err):
                                         store.showBanner(err.localizedDescription, isError: true)
                                     }
@@ -805,18 +805,8 @@ struct TrashSkillConfirmModalView: View {
                             .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.cardBorder, lineWidth: 1))
                             .foregroundColor(palette.primaryText).cornerRadius(8)
 
-                        Button("卸载并转存关注") {
-                            store.trashSkill(skill, saveToWatchlist: true)
-                            ui.pendingTrashSkill = nil
-                        }
-                        .buttonStyle(.plain).font(.system(size: 12, weight: .bold))
-                        .padding(.horizontal, 12).padding(.vertical, 6.5)
-                        .background(palette.amberBg)
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.amberBorder, lineWidth: 1))
-                        .foregroundColor(palette.amberAccent).cornerRadius(8)
-
-                        Button("仅移入废纸篓") {
-                            store.trashSkill(skill, saveToWatchlist: false)
+                        Button(ui.archiveTrashedSkill ? "卸载并转存关注" : "移入废纸篓") {
+                            store.trashSkill(skill, saveToWatchlist: ui.archiveTrashedSkill)
                             ui.pendingTrashSkill = nil
                         }
                         .buttonStyle(.plain).font(.system(size: 12, weight: .bold))
@@ -884,25 +874,38 @@ struct DeleteCategoryModalView: View {
     @ObservedObject var ui: SkillHubUIState
     let palette: ThemePalette
 
-    private var skillCount: Int { store.skills.filter { $0.categoryId == category.id }.count }
-    private var fallbackName: String { store.categories.first(where: { $0.id != category.id })?.name ?? "默认分类" }
-
+    private var groups: [SkillCategory] {
+        switch ui.activeTab {
+        case .mcp: return store.mcpCategories
+        case .plugins: return store.pluginCategories
+        default: return store.categories
+        }
+    }
+    private var targets: [SkillCategory] { groups.filter { $0.id != category.id } }
+    private var count: Int {
+        switch ui.activeTab {
+        case .mcp: return store.mcpServers.filter { $0.categoryId == category.id }.count
+        case .plugins: return store.plugins.filter { $0.categoryId == category.id }.count
+        default: return store.skills.filter { $0.categoryId == category.id }.count
+        }
+    }
     var body: some View {
         ZStack {
             Color.black.opacity(0.45).ignoresSafeArea().onTapGesture { ui.pendingDeleteCategory = nil }
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 7) {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundColor(palette.dangerColor)
-                    Text("确认删除分类").font(.system(size: 14, weight: .bold)).foregroundColor(palette.primaryText)
+                    Text("删除用途分组").font(.system(size: 14, weight: .bold)).foregroundColor(palette.primaryText)
                     Spacer()
                 }
                 .padding(.horizontal, 16).padding(.vertical, 12).background(palette.sidebarBg)
                 Divider().background(palette.divider)
 
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("确定要删除分类「\(category.name)」吗？该分类下的 \(skillCount) 个技能将自动归入「\(fallbackName)」。")
-                        .font(.system(size: 12.5)).foregroundColor(palette.primaryText).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
-                    Text("此操作仅移除分类标签，不会删除任何本地 Skill 文件。").font(.system(size: 11.5)).foregroundColor(palette.mutedText)
+                    Text("「\(category.name)」包含 \(count) 项资产。")
+                    Picker("将组内资产迁移至", selection: $ui.destination) {
+                        ForEach(targets) { Text($0.name).tag($0.id) }
+                    }.onAppear { ui.destination = targets.first?.id ?? "" }
                     HStack(spacing: 8) {
                         Spacer()
                         Button("取消") { ui.pendingDeleteCategory = nil }
@@ -911,8 +914,15 @@ struct DeleteCategoryModalView: View {
                             .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.cardBorder, lineWidth: 1))
                             .foregroundColor(palette.primaryText).cornerRadius(8)
                         Button("确认删除") {
-                            let targetId = category.id
-                            if store.deleteCategory(id: targetId), ui.selectedCategoryId == targetId { ui.selectedCategoryId = "ALL" }
+                            switch ui.activeTab {
+                            case .skills:
+                                if store.deleteCategory(id: category.id, migrateTo: ui.destination), ui.selectedCategoryId == category.id { ui.selectedCategoryId = ui.destination }
+                            case .mcp:
+                                if store.deleteMcpCategory(id: category.id, migrateTo: ui.destination), ui.mcpCategoryFilter == category.id { ui.mcpCategoryFilter = ui.destination }
+                            case .plugins:
+                                if store.deletePluginCategory(id: category.id, migrateTo: ui.destination), ui.pluginCategoryFilter == category.id { ui.pluginCategoryFilter = ui.destination }
+                            case .watchlist: break
+                            }
                             ui.pendingDeleteCategory = nil
                         }
                         .buttonStyle(.plain).font(.system(size: 12, weight: .bold))

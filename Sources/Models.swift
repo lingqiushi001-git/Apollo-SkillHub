@@ -6,66 +6,39 @@ import SwiftUI
 struct ThemePalette {
     let isDark: Bool
 
-    var windowBg: Color {
-        isDark ? Color(red: 0.06, green: 0.08, blue: 0.12) : Color(red: 0.96, green: 0.97, blue: 0.99)
+    private func color(_ dark: Int, _ light: Int) -> Color {
+        let rgb = isDark ? dark : light
+        return Color(red: Double(rgb >> 16) / 255, green: Double((rgb >> 8) & 255) / 255, blue: Double(rgb & 255) / 255)
     }
-    var sidebarBg: Color {
-        isDark ? Color(red: 0.08, green: 0.10, blue: 0.16) : Color(red: 0.93, green: 0.95, blue: 0.98)
-    }
-    var cardBg: Color {
-        isDark ? Color(red: 0.11, green: 0.14, blue: 0.20) : Color.white
-    }
-    var cardBorder: Color {
-        isDark ? Color(red: 0.20, green: 0.25, blue: 0.35) : Color(red: 0.83, green: 0.87, blue: 0.92)
-    }
-    var primaryText: Color {
-        isDark ? Color(red: 0.97, green: 0.98, blue: 1.00) : Color(red: 0.07, green: 0.10, blue: 0.18)
-    }
-    var secondaryText: Color {
-        isDark ? Color(red: 0.76, green: 0.82, blue: 0.90) : Color(red: 0.30, green: 0.37, blue: 0.46)
-    }
-    var mutedText: Color {
-        isDark ? Color(red: 0.56, green: 0.63, blue: 0.74) : Color(red: 0.44, green: 0.50, blue: 0.59)
-    }
-    var inputBg: Color {
-        isDark ? Color(red: 0.08, green: 0.10, blue: 0.15) : Color(red: 0.95, green: 0.96, blue: 0.99)
-    }
-    var chipBg: Color {
-        isDark ? Color.white.opacity(0.09) : Color.black.opacity(0.06)
-    }
-    var divider: Color {
-        isDark ? Color.white.opacity(0.10) : Color.black.opacity(0.08)
-    }
-    var accentBlue: Color {
-        isDark ? Color(red: 0.36, green: 0.66, blue: 1.00) : Color(red: 0.14, green: 0.44, blue: 0.92)
-    }
-    var purpleAccent: Color {
-        isDark ? Color(red: 0.66, green: 0.50, blue: 1.00) : Color(red: 0.46, green: 0.26, blue: 0.88)
-    }
-    var amberAccent: Color {
-        isDark ? Color(red: 0.96, green: 0.72, blue: 0.23) : Color(red: 0.58, green: 0.32, blue: 0.00)
-    }
-    var amberFg: Color {
-        isDark ? Color(red: 0.08, green: 0.10, blue: 0.16) : Color.white
-    }
-    var amberBg: Color {
-        isDark ? Color(red: 0.96, green: 0.72, blue: 0.23).opacity(0.15) : Color(red: 0.58, green: 0.32, blue: 0.00).opacity(0.10)
-    }
-    var amberBorder: Color {
-        isDark ? Color(red: 0.96, green: 0.72, blue: 0.23).opacity(0.45) : Color(red: 0.58, green: 0.32, blue: 0.00).opacity(0.36)
-    }
-    var okColor: Color {
-        isDark ? Color(red: 0.20, green: 0.84, blue: 0.52) : Color(red: 0.07, green: 0.53, blue: 0.30)
-    }
-    var warnColor: Color {
-        isDark ? Color(red: 0.99, green: 0.73, blue: 0.20) : Color(red: 0.72, green: 0.41, blue: 0.00)
-    }
-    var dangerColor: Color {
-        isDark ? Color(red: 1.00, green: 0.38, blue: 0.40) : Color(red: 0.80, green: 0.15, blue: 0.19)
-    }
-    var switchOffTrack: Color {
-        isDark ? Color(red: 0.24, green: 0.29, blue: 0.39) : Color(red: 0.78, green: 0.82, blue: 0.88)
-    }
+
+    var windowBg: Color { color(0x0C0E12, 0xF6F7F9) }
+    var sidebarBg: Color { color(0x11141A, 0xEFF1F5) }
+    var listBg: Color { color(0x151921, 0xFFFFFF) }
+    var inspectorBg: Color { color(0x101319, 0xFAFBFD) }
+    var surfaceBg: Color { color(0x1B202B, 0xEEF1F6) }
+    var primaryText: Color { color(0xF3F5F8, 0x0F172A) }
+    var secondaryText: Color { color(0x9AA4B2, 0x475569) }
+    var mutedText: Color { color(0x636E7E, 0x64748B) }
+    var okColor: Color { color(0x10B981, 0x059669) }
+    var accentBlue: Color { color(0x3B82F6, 0x2563EB) }
+    var amberAccent: Color { color(0xF59E0B, 0xB45309) }
+    var dangerColor: Color { color(0xEF4444, 0xDC2626) }
+    var cardBg: Color { surfaceBg }
+    var inputBg: Color { windowBg }
+    var chipBg: Color { surfaceBg }
+    var divider: Color { cardBorder }
+    var purpleAccent: Color { accentBlue }
+    var amberFg: Color { isDark ? windowBg : .white }
+    var amberBg: Color { amberAccent.opacity(isDark ? 0.13 : 0.10) }
+    var amberBorder: Color { amberAccent.opacity(isDark ? 0.34 : 0.28) }
+    var warnColor: Color { amberAccent }
+    var switchOffTrack: Color { mutedText.opacity(0.55) }
+    var cardBorder: Color { color(0xFFFFFF, 0x0F172A).opacity(0.08) }
+    var strongBorder: Color { color(0xFFFFFF, 0x0F172A).opacity(isDark ? 0.14 : 0.15) }
+    var greenBg: Color { okColor.opacity(isDark ? 0.14 : 0.11) }
+    var greenBorder: Color { okColor.opacity(isDark ? 0.28 : 0.26) }
+    var blueBg: Color { accentBlue.opacity(isDark ? 0.14 : 0.10) }
+    var blueBorder: Color { accentBlue.opacity(isDark ? 0.30 : 0.26) }
 }
 
 // MARK: - Domain Models

@@ -1,3 +1,4 @@
 .DS_Store
-.apollo-ui/
+dmg_stage/
 *.dmg
+.skill_registry.json

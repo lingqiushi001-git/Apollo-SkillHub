@@ -14,219 +14,144 @@ let sizes: [(name: String, px: Int)] = [
     ("icon_512x512@2x.png", 1024)
 ]
 
+let space = CGColorSpace(name: CGColorSpace.sRGB)!
+
+func ink(_ hex: Int, _ alpha: CGFloat = 1) -> CGColor {
+    CGColor(srgbRed: CGFloat((hex >> 16) & 255) / 255,
+            green: CGFloat((hex >> 8) & 255) / 255,
+            blue: CGFloat(hex & 255) / 255, alpha: alpha)
+}
+
 func renderIcon(px: Int) -> Data? {
-    let s = CGFloat(px)
-    let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
-    guard let ctx = CGContext(
-        data: nil,
-        width: px,
-        height: px,
-        bitsPerComponent: 8,
-        bytesPerRow: 0,
-        space: colorSpace,
-        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-    ) else { return nil }
+    guard let c = CGContext(data: nil, width: px, height: px, bitsPerComponent: 8,
+                            bytesPerRow: 0, space: space,
+                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+    // Design units use a 1000-square grid with the origin at bottom left.
+    let scale = CGFloat(px) / 1000
+    c.scaleBy(x: scale, y: scale)
+    let small = px <= 32
+    let hairline = max(1.4, 0.55 / scale)
 
-    ctx.setAllowsAntialiasing(true)
-    ctx.setShouldAntialias(true)
-
-    // 1. macOS squircle background (sibling style to Apollo AgentMeter)
-    let margin = s * 0.08
-    let rect = CGRect(x: margin, y: margin, width: s - margin * 2, height: s - margin * 2)
-    let corner = rect.width * 0.225
-    let bgPath = CGPath(roundedRect: rect, cornerWidth: corner, cornerHeight: corner, transform: nil)
-
-    ctx.saveGState()
-    ctx.setShadow(
-        offset: CGSize(width: 0, height: -s * 0.02),
-        blur: s * 0.05,
-        color: CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.45)
-    )
-    ctx.addPath(bgPath)
-    ctx.setFillColor(CGColor(srgbRed: 0.06, green: 0.07, blue: 0.14, alpha: 1.0))
-    ctx.fillPath()
-    ctx.restoreGState()
-
-    ctx.saveGState()
-    ctx.addPath(bgPath)
-    ctx.clip()
-
-    // Deep obsidian-to-violet-indigo gradient
-    let bgColors = [
-        CGColor(srgbRed: 0.13, green: 0.14, blue: 0.28, alpha: 1.0),
-        CGColor(srgbRed: 0.05, green: 0.07, blue: 0.14, alpha: 1.0)
-    ] as CFArray
-    if let grad = CGGradient(colorsSpace: colorSpace, colors: bgColors, locations: [0.0, 1.0]) {
-        ctx.drawLinearGradient(
-            grad,
-            start: CGPoint(x: s * 0.5, y: rect.maxY),
-            end: CGPoint(x: s * 0.5, y: rect.minY),
-            options: []
-        )
+    func gradient(_ path: CGPath, _ colors: [CGColor]) {
+        c.saveGState()
+        c.addPath(path)
+        c.clip()
+        let bounds = path.boundingBoxOfPath
+        let gradient = CGGradient(colorsSpace: space, colors: colors as CFArray, locations: nil)!
+        c.drawLinearGradient(gradient, start: CGPoint(x: bounds.midX, y: bounds.maxY),
+                             end: CGPoint(x: bounds.midX, y: bounds.minY), options: [])
+        c.restoreGState()
     }
 
-    // Ambient top-right violet-cyan glow
-    let glowColors = [
-        CGColor(srgbRed: 0.45, green: 0.38, blue: 1.0, alpha: 0.30),
-        CGColor(srgbRed: 0.45, green: 0.38, blue: 1.0, alpha: 0.0)
-    ] as CFArray
-    if let rGrad = CGGradient(colorsSpace: colorSpace, colors: glowColors, locations: [0.0, 1.0]) {
-        ctx.drawRadialGradient(
-            rGrad,
-            startCenter: CGPoint(x: s * 0.65, y: s * 0.72),
-            startRadius: 0,
-            endCenter: CGPoint(x: s * 0.65, y: s * 0.72),
-            endRadius: s * 0.58,
-            options: []
-        )
+    func stroke(_ path: CGPath, _ color: CGColor, _ width: CGFloat) {
+        c.addPath(path)
+        c.setStrokeColor(color)
+        c.setLineWidth(width)
+        c.setLineCap(.round)
+        c.strokePath()
     }
 
-    // 2. 2x2 Modular Skill Tiles Grid
-    let tileSize = s * 0.255
-    let gap = s * 0.058
-    let totalGrid = tileSize * 2 + gap
-    let startX = (s - totalGrid) * 0.5
-    let startY = (s - totalGrid) * 0.5 + s * 0.015
-    let tileCorner = tileSize * 0.26
+    func raisedPanel(_ path: CGPath, top: Int, bottom: Int, depth: CGFloat) {
+        c.saveGState()
+        c.setShadow(offset: CGSize(width: 0, height: -depth * scale),
+                    blur: depth * 2.4 * scale, color: ink(0, 0.5))
+        c.addPath(path)
+        c.setFillColor(ink(bottom))
+        c.fillPath()
+        c.restoreGState()
+        gradient(path, [ink(top), ink(bottom)])
+    }
 
-    func drawGradientTile(x: CGFloat, y: CGFloat, c1: CGColor, c2: CGColor, glow: CGColor) {
-        let r = CGRect(x: x, y: y, width: tileSize, height: tileSize)
-        let p = CGPath(roundedRect: r, cornerWidth: tileCorner, cornerHeight: tileCorner, transform: nil)
-        ctx.saveGState()
-        ctx.setShadow(offset: CGSize(width: 0, height: -s * 0.012), blur: s * 0.035, color: glow)
-        ctx.addPath(p)
-        ctx.setFillColor(c1)
-        ctx.fillPath()
-        ctx.restoreGState()
-
-        ctx.saveGState()
-        ctx.addPath(p)
-        ctx.clip()
-        if let g = CGGradient(colorsSpace: colorSpace, colors: [c1, c2] as CFArray, locations: [0.0, 1.0]) {
-            ctx.drawLinearGradient(
-                g,
-                start: CGPoint(x: r.minX, y: r.maxY),
-                end: CGPoint(x: r.maxX, y: r.minY),
-                options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
-            )
+    let face = CGRect(x: 80, y: 80, width: 840, height: 840)
+    let radius = face.width * 0.225
+    let base = CGPath(roundedRect: face, cornerWidth: radius, cornerHeight: radius, transform: nil)
+    raisedPanel(base, top: 0x181D27, bottom: 0x0B0E14, depth: 14)
+    c.saveGState()
+    c.addPath(base)
+    c.clip()
+    let reflection = CGGradient(colorsSpace: space, colors: [ink(0xBCCFE3, 0.07), ink(0xBCCFE3, 0)] as CFArray, locations: nil)!
+    c.saveGState()
+    c.translateBy(x: 500, y: 76)
+    c.scaleBy(x: 1, y: 0.23)
+    c.drawRadialGradient(reflection, startCenter: .zero, startRadius: 0,
+                         endCenter: .zero, endRadius: 370, options: [])
+    c.restoreGState()
+    if !small {
+        c.setFillColor(ink(0xffffff, 0.045))
+        for x in stride(from: 100, through: 900, by: 20) {
+            for y in stride(from: 100, through: 900, by: 20) {
+                c.fillEllipse(in: CGRect(x: CGFloat(x)-1.2, y: CGFloat(y)-1.2, width: 2.4, height: 2.4))
+            }
         }
-        ctx.restoreGState()
+    }
+    let edge = base.copy(strokingWithWidth: hairline * 2, lineCap: .round, lineJoin: .round, miterLimit: 1)
+    gradient(edge, [ink(0xffffff, 0.22), ink(0xffffff, 0.05)])
+    c.restoreGState()
 
-        // Crisp inner highlight stroke
-        ctx.saveGState()
-        ctx.addPath(p)
-        ctx.setLineWidth(max(1.0, s * 0.01))
-        ctx.setStrokeColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.28))
-        ctx.strokePath()
-        ctx.restoreGState()
+    let routes: [(y: CGFloat, signal: Int, light: Int)] = [
+        (710, 0x10B981, 0xD1FAE5), (290, 0xF59E0B, 0xFEF3C7), (500, 0x3B82F6, 0xDBEAFE)
+    ]
+    let gauge: CGFloat = small ? 49 : 42
+    for route in routes {
+        let trace = CGMutablePath()
+        trace.move(to: CGPoint(x: 432, y: 500))
+        trace.addCurve(to: CGPoint(x: 760, y: route.y), control1: CGPoint(x: 590, y: 500),
+                       control2: CGPoint(x: 565, y: route.y))
+        stroke(trace, ink(0x06090D), gauge + 10)
+        c.saveGState()
+        c.setShadow(offset: .zero, blur: 9 * scale, color: ink(route.signal, 0.32))
+        stroke(trace, ink(route.signal), gauge)
+        c.restoreGState()
+        let wire = trace.copy(strokingWithWidth: gauge, lineCap: .round, lineJoin: .round, miterLimit: 1)
+        gradient(wire, [ink(route.light, 0.14), ink(route.signal, 0), ink(0, 0.09)])
+    }
+    for route in routes {
+        func disc(_ diameter: CGFloat) -> CGPath {
+            CGPath(ellipseIn: CGRect(x: 760-diameter/2, y: route.y-diameter/2,
+                                     width: diameter, height: diameter), transform: nil)
+        }
+        let socket = disc(small ? 133 : 115)
+        raisedPanel(socket, top: 0x36404D, bottom: 0x10151E, depth: 4)
+        stroke(socket, ink(0xffffff, 0.15), hairline)
+        let lens = disc(small ? 92 : 76)
+        stroke(lens, ink(0x070B10), 5)
+        gradient(lens, [ink(route.light), ink(route.signal), ink(route.signal)])
+        c.addPath(disc(small ? 33 : 24))
+        c.setFillColor(ink(route.light))
+        c.fillPath()
     }
 
-    // Top-Left Tile: Emerald -> Teal (Active Skill / Antigravity)
-    drawGradientTile(
-        x: startX,
-        y: startY + tileSize + gap,
-        c1: CGColor(srgbRed: 0.16, green: 0.90, blue: 0.58, alpha: 1.0),
-        c2: CGColor(srgbRed: 0.10, green: 0.66, blue: 0.64, alpha: 1.0),
-        glow: CGColor(srgbRed: 0.16, green: 0.90, blue: 0.58, alpha: 0.35)
-    )
+    let core = CGRect(x: small ? 166 : 189, y: small ? 350 : 368,
+                      width: small ? 300 : 264, height: small ? 300 : 264)
+    let corner = core.width * 0.24
+    let plate = CGPath(roundedRect: core, cornerWidth: corner, cornerHeight: corner, transform: nil)
+    raisedPanel(plate, top: 0x202736, bottom: 0x141923, depth: 10)
+    c.addPath(plate)
+    c.clip()
+    stroke(plate, ink(0xffffff, 0.18), hairline * 2)
 
-    // Top-Right Tile: Sky Blue -> Indigo (Codex)
-    drawGradientTile(
-        x: startX + tileSize + gap,
-        y: startY + tileSize + gap,
-        c1: CGColor(srgbRed: 0.28, green: 0.72, blue: 1.00, alpha: 1.0),
-        c2: CGColor(srgbRed: 0.28, green: 0.42, blue: 0.96, alpha: 1.0),
-        glow: CGColor(srgbRed: 0.28, green: 0.72, blue: 1.00, alpha: 0.35)
-    )
+    // A single cut-metal silhouette. Widen the legs at list-icon sizes.
+    c.translateBy(x: core.midX, y: core.midY)
+    let markScale: CGFloat = small ? 1.30 : 1
+    c.scaleBy(x: markScale, y: markScale)
+    let mark = CGMutablePath()
+    mark.move(to: CGPoint(x: 0, y: 86))
+    for point in [CGPoint(x: 86, y: -72), CGPoint(x: small ? 40 : 49, y: -72),
+                  CGPoint(x: 33, y: -43), CGPoint(x: -33, y: -43),
+                  CGPoint(x: small ? -40 : -49, y: -72), CGPoint(x: -86, y: -72)] {
+        mark.addLine(to: point)
+    }
+    mark.closeSubpath()
+    mark.move(to: CGPoint(x: 0, y: 21))
+    mark.addLine(to: CGPoint(x: -17, y: -15))
+    mark.addLine(to: CGPoint(x: 17, y: -15))
+    mark.closeSubpath()
+    c.addPath(mark)
+    c.setFillColor(ink(0xffffff))
+    c.drawPath(using: .eoFill)
 
-    // Bottom-Left Tile: Violet -> Magenta-Purple (Claude / Categories)
-    drawGradientTile(
-        x: startX,
-        y: startY,
-        c1: CGColor(srgbRed: 0.64, green: 0.46, blue: 1.00, alpha: 1.0),
-        c2: CGColor(srgbRed: 0.48, green: 0.26, blue: 0.90, alpha: 1.0),
-        glow: CGColor(srgbRed: 0.64, green: 0.46, blue: 1.00, alpha: 0.35)
-    )
-
-    // Bottom-Right Tile: Glassy Toggle Track Tile (representing 1-click switch hub)
-    let brRect = CGRect(x: startX + tileSize + gap, y: startY, width: tileSize, height: tileSize)
-    let brPath = CGPath(roundedRect: brRect, cornerWidth: tileCorner, cornerHeight: tileCorner, transform: nil)
-    ctx.saveGState()
-    ctx.addPath(brPath)
-    ctx.setFillColor(CGColor(srgbRed: 0.18, green: 0.22, blue: 0.36, alpha: 0.92))
-    ctx.fillPath()
-    ctx.addPath(brPath)
-    ctx.setLineWidth(max(1.0, s * 0.012))
-    ctx.setStrokeColor(CGColor(srgbRed: 0.45, green: 0.75, blue: 1.0, alpha: 0.55))
-    ctx.strokePath()
-    ctx.restoreGState()
-
-    // Mini iOS Toggle Switch inside Bottom-Right Tile
-    let swW = tileSize * 0.66
-    let swH = tileSize * 0.36
-    let swRect = CGRect(
-        x: brRect.midX - swW * 0.5,
-        y: brRect.midY - swH * 0.5,
-        width: swW,
-        height: swH
-    )
-    let swPath = CGPath(roundedRect: swRect, cornerWidth: swH * 0.5, cornerHeight: swH * 0.5, transform: nil)
-    ctx.saveGState()
-    ctx.addPath(swPath)
-    ctx.setFillColor(CGColor(srgbRed: 0.18, green: 0.86, blue: 0.54, alpha: 1.0))
-    ctx.fillPath()
-    let thumbD = swH * 0.76
-    let thumbRect = CGRect(
-        x: swRect.maxX - thumbD - swH * 0.12,
-        y: swRect.midY - thumbD * 0.5,
-        width: thumbD,
-        height: thumbD
-    )
-    ctx.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1.0))
-    ctx.fillEllipse(in: thumbRect)
-    ctx.restoreGState()
-
-    // 3. Central Glowing AI Sparkle Hub uniting all 4 skill tiles
-    let center = CGPoint(x: s * 0.5, y: startY + totalGrid * 0.5)
-    let hubBgR = s * 0.095
-    ctx.saveGState()
-    ctx.setFillColor(CGColor(srgbRed: 0.07, green: 0.09, blue: 0.18, alpha: 0.96))
-    ctx.fillEllipse(in: CGRect(x: center.x - hubBgR, y: center.y - hubBgR, width: hubBgR * 2, height: hubBgR * 2))
-    ctx.setLineWidth(max(1.0, s * 0.012))
-    ctx.setStrokeColor(CGColor(srgbRed: 0.65, green: 0.86, blue: 1.0, alpha: 0.65))
-    ctx.strokeEllipse(in: CGRect(x: center.x - hubBgR, y: center.y - hubBgR, width: hubBgR * 2, height: hubBgR * 2))
-    ctx.restoreGState()
-
-    let spR = s * 0.062
-    let spIn = s * 0.018
-    let spPath = CGMutablePath()
-    spPath.move(to: CGPoint(x: center.x, y: center.y + spR))
-    spPath.addQuadCurve(to: CGPoint(x: center.x + spR, y: center.y), control: CGPoint(x: center.x + spIn, y: center.y + spIn))
-    spPath.addQuadCurve(to: CGPoint(x: center.x, y: center.y - spR), control: CGPoint(x: center.x + spIn, y: center.y - spIn))
-    spPath.addQuadCurve(to: CGPoint(x: center.x - spR, y: center.y), control: CGPoint(x: center.x - spIn, y: center.y - spIn))
-    spPath.addQuadCurve(to: CGPoint(x: center.x, y: center.y + spR), control: CGPoint(x: center.x - spIn, y: center.y + spIn))
-    spPath.closeSubpath()
-
-    ctx.saveGState()
-    ctx.setShadow(offset: .zero, blur: s * 0.03, color: CGColor(srgbRed: 0.4, green: 0.88, blue: 1.0, alpha: 0.85))
-    ctx.addPath(spPath)
-    ctx.setFillColor(CGColor(srgbRed: 0.98, green: 0.99, blue: 1.0, alpha: 1.0))
-    ctx.fillPath()
-    ctx.restoreGState()
-
-    ctx.restoreGState() // end squircle clip
-
-    // Outer squircle border highlight
-    ctx.saveGState()
-    ctx.addPath(bgPath)
-    ctx.setLineWidth(max(1.0, s * 0.014))
-    ctx.setStrokeColor(CGColor(srgbRed: 0.52, green: 0.62, blue: 1.0, alpha: 0.35))
-    ctx.strokePath()
-    ctx.restoreGState()
-
-    guard let cgImg = ctx.makeImage() else { return nil }
-    let rep = NSBitmapImageRep(cgImage: cgImg)
-    return rep.representation(using: .png, properties: [:])
+    guard let image = c.makeImage() else { return nil }
+    return NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
 }
 
 let scriptDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
@@ -234,13 +159,14 @@ let outDir = CommandLine.arguments.count > 1
     ? CommandLine.arguments[1]
     : "\(scriptDir)/AppIcon.iconset"
 
-try? FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
-
+try FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
+var rendered = [Int: Data]()
 for item in sizes {
-    if let data = renderIcon(px: item.px) {
-        let url = URL(fileURLWithPath: "\(outDir)/\(item.name)")
-        try! data.write(to: url)
+    guard let data = rendered[item.px] ?? renderIcon(px: item.px) else {
+        throw CocoaError(.fileWriteUnknown)
     }
+    rendered[item.px] = data
+    try data.write(to: URL(fileURLWithPath: outDir).appendingPathComponent(item.name), options: .atomic)
 }
 
 let icnsPath = CommandLine.arguments.count > 2
@@ -260,7 +186,7 @@ func u32BE(_ val: UInt32) -> Data {
 
 var bodyData = Data()
 for entry in icnsTypes {
-    if let png = renderIcon(px: entry.px) {
+    if let png = rendered[entry.px] {
         bodyData.append(entry.ostype.data(using: .ascii)!)
         bodyData.append(u32BE(UInt32(8 + png.count)))
         bodyData.append(png)
@@ -271,5 +197,5 @@ var icnsData = Data()
 icnsData.append("icns".data(using: .ascii)!)
 icnsData.append(u32BE(UInt32(8 + bodyData.count)))
 icnsData.append(bodyData)
-try! icnsData.write(to: URL(fileURLWithPath: icnsPath))
-print("Generated Apollo SkillHub AppIcon.icns (\(icnsData.count) bytes)")
+try icnsData.write(to: URL(fileURLWithPath: icnsPath), options: .atomic)
+print("Generated Apollo AgentHub AppIcon.icns (\(icnsData.count) bytes)")

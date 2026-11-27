@@ -30,14 +30,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if mainWindow == nil {
             let hosting = NSHostingController(rootView: SkillHubRootView(store: store, ui: ui))
             let win = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 1020, height: 660),
-                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                contentRect: NSRect(x: 0, y: 0, width: 1180, height: 740),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                 backing: .buffered,
                 defer: false
             )
+            win.titlebarAppearsTransparent = true
+            win.titleVisibility = .hidden
             win.title = "Apollo AgentHub"
-            win.minSize = NSSize(width: 920, height: 600)
             win.contentViewController = hosting
+            win.setContentSize(NSSize(width: 1180, height: 740))
+            win.minSize = NSSize(width: 960, height: 620)
             win.isReleasedWhenClosed = false
             win.center()
             win.setFrameAutosaveName("ApolloAgentHubMainWindow")
